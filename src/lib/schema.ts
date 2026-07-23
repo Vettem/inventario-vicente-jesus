@@ -19,6 +19,7 @@ export type ProductView = {
   costPrice: number;
   salePrice: number;
   lowStockThreshold: number;
+  active: boolean;
   raw: DbRow;
 };
 
@@ -31,6 +32,8 @@ export type SaleView = {
   quantity: number;
   total: number;
   grossProfit: number;
+  paymentMethod: string;
+  note: string;
   createdAt: unknown;
   raw: DbRow;
 };
@@ -147,6 +150,7 @@ export function productFromRow(row: DbRow): ProductView {
       ['low_stock_threshold', 'minimum_stock', 'min_stock', 'stock_minimo'],
       5,
     ),
+    active: booleanValue(row, ['active', 'is_active', 'enabled', 'activo']),
     raw: row,
   };
 }
@@ -180,10 +184,20 @@ export function saleFromRow(
     productId,
     productName: stringValue(row, ['product_name', 'producto'], product?.name ?? 'Producto'),
     sellerId,
-    sellerName: stringValue(row, ['seller_name', 'vendedor'], seller?.name ?? 'Vendedor'),
+    sellerName: stringValue(
+      row,
+      ['seller_name', 'vendedor', 'member_name', 'user_name'],
+      seller?.name ?? 'No registrado',
+    ),
     quantity,
     total,
     grossProfit,
+    paymentMethod: stringValue(
+      row,
+      ['payment_method', 'metodo_pago', 'payment', 'forma_pago'],
+      'No registrado',
+    ),
+    note: stringValue(row, ['notes', 'note', 'customer', 'cliente', 'detalle']),
     createdAt: row.created_at ?? row.sold_at ?? row.date ?? row.fecha,
     raw: row,
   };

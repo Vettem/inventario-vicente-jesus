@@ -1,5 +1,37 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  FormEvent,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type { PostgrestError, Session } from '@supabase/supabase-js';
+import {
+  Activity,
+  AlertTriangle,
+  ArrowDownCircle,
+  ArrowUpCircle,
+  BadgeDollarSign,
+  Boxes,
+  CheckCircle2,
+  ClipboardList,
+  CreditCard,
+  Home,
+  LogOut,
+  LucideIcon,
+  Menu,
+  MoreHorizontal,
+  PackagePlus,
+  PackageSearch,
+  Receipt,
+  RefreshCw,
+  TrendingUp,
+  Warehouse,
+  X,
+  XCircle,
+} from 'lucide-react';
 import { hasSupabaseConfig, supabase } from './lib/supabase';
 import {
   compareByDateDesc,
@@ -21,6 +53,10 @@ import {
 import { formatClp, formatDate, formatUnits } from './lib/format';
 
 type Tab = 'resumen' | 'productos' | 'operaciones' | 'ventas' | 'historial';
+type OperationTab = 'entry' | 'sale' | 'output';
+type ToastTone = 'success' | 'error' | 'warning';
+type BadgeTone = 'green' | 'teal' | 'red' | 'yellow' | 'gray' | 'blue';
+type HistoryFilter = 'all' | 'entries' | 'sales' | 'outputs' | 'damages';
 
 type LoadState = {
   products: ProductView[];
@@ -31,8 +67,33 @@ type LoadState = {
 
 type FormStatus = {
   loading: boolean;
-  error: string;
-  success: string;
+};
+
+type ToastMessage = {
+  id: number;
+  tone: ToastTone;
+  title: string;
+  text?: string;
+};
+
+type Summary = {
+  availableUnits: number;
+  inventoryCostValue: number;
+  accumulatedSales: number;
+  grossProfit: number;
+  lowStockCount: number;
+};
+
+type NavItem = {
+  id: Tab;
+  label: string;
+  icon: LucideIcon;
+};
+
+type MovementMeta = {
+  label: string;
+  tone: BadgeTone;
+  category: Exclude<HistoryFilter, 'all'>;
 };
 
 const initialData: LoadState = {
@@ -44,22 +105,42 @@ const initialData: LoadState = {
 
 const emptyStatus: FormStatus = {
   loading: false,
-  error: '',
-  success: '',
 };
 
-const paymentMethods = ['Transferencia', 'Efectivo', 'Débito', 'Crédito', 'Otro'];
+const navItems: NavItem[] = [
+  { id: 'resumen', label: 'Resumen', icon: Home },
+  { id: 'productos', label: 'Productos', icon: Boxes },
+  { id: 'operaciones', label: 'Movimientos', icon: Activity },
+  { id: 'ventas', label: 'Ventas', icon: Receipt },
+  { id: 'historial', label: 'Historial', icon: ClipboardList },
+];
 
-function logSupabaseError(context: string, error: unknown) {
-  const supabaseError = error as Partial<PostgrestError>;
+const paymentMethods = ['Transferencia', 'Efectivo', 'Debito', 'Credito', 'Otro'];
 
-  console.error(context, {
-    message: supabaseError.message,
-    details: supabaseError.details,
-    hint: supabaseError.hint,
-    code: supabaseError.code,
-  });
-}
+const movementTypeMeta: Record<string, MovementMeta> = {
+  purchase: { label: 'Entrada', tone: 'green', category: 'entries' },
+  sale: { label: 'Venta', tone: 'teal', category: 'sales' },
+  damaged: { label: 'Producto dañado', tone: 'red', category: 'damages' },
+  loss: { label: 'Perdida', tone: 'red', category: 'damages' },
+  adjustment_in: {
+    label: 'Ajuste de entrada',
+    tone: 'yellow',
+    category: 'entries',
+  },
+  adjustment_out: {
+    label: 'Ajuste de salida',
+    tone: 'yellow',
+    category: 'outputs',
+  },
+};
+
+const historyFilters: Array<{ id: HistoryFilter; label: string }> = [
+  { id: 'all', label: 'Todos' },
+  { id: 'entries', label: 'Entradas' },
+  { id: 'sales', label: 'Ventas' },
+  { id: 'outputs', label: 'Salidas' },
+  { id: 'damages', label: 'Daños' },
+];
 
 function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -75,28 +156,47 @@ function App() {
   const [dataError, setDataError] = useState('');
   const [formStatus, setFormStatus] = useState<FormStatus>(emptyStatus);
   const [saleFormVersion, setSaleFormVersion] = useState(0);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const toastIdRef = useRef(0);
   const activeSessionRef = useRef<Session | null>(null);
   const loadedUserIdRef = useRef<string | null>(null);
-  const loadCountRef = useRef(0);
-  const authEventCountRef = useRef(0);
 
-  const loadData = useCallback(async (currentSession: Session, reason: string) => {
+  const showToast = useCallback(
+    (tone: ToastTone, title: string, text?: string) => {
+      toastIdRef.current += 1;
+      const toast: ToastMessage = {
+        id: toastIdRef.current,
+        tone,
+        title,
+        text,
+      };
+
+      setToasts((current) => [...current, toast]);
+    },
+    [],
+  );
+
+  const dismissToast = useCallback((id: number) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
+
+  useEffect(() => {
+    if (!toasts.length) return undefined;
+
+    const timeoutId = window.setTimeout(() => {
+      setToasts((current) => current.slice(1));
+    }, 3800);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [toasts]);
+
+  const loadData = useCallback(async (currentSession: Session) => {
     if (!currentSession.user) return;
-
-    const loadNumber = loadCountRef.current + 1;
-    loadCountRef.current = loadNumber;
-    console.info(`[inventario] carga #${loadNumber} iniciada: ${reason}`);
-    console.count('[inventario] loadData');
 
     setDataLoading(true);
     setDataError('');
 
     try {
-      console.count('[inventario] query members');
-      console.count('[inventario] query products');
-      console.count('[inventario] query sales');
-      console.count('[inventario] query inventory_movements');
-
       const [membersResult, productsResult, salesResult, movementsResult] =
         await Promise.all([
           supabase.from('members').select('*'),
@@ -137,38 +237,29 @@ function App() {
 
       setMember(activeMember);
       setData({ members, products, sales, movements });
-      console.info(`[inventario] carga #${loadNumber} completada`);
     } catch (error) {
-      console.error(`[inventario] carga #${loadNumber} fallo`, error);
+      logSupabaseError('[inventario] error Supabase al cargar datos', error);
       setDataError(getReadableError(error));
     } finally {
       setDataLoading(false);
     }
   }, []);
 
-  const refreshData = useCallback(
-    async (reason: string) => {
-      const currentSession = activeSessionRef.current;
-      if (!currentSession) {
-        setDataError('No hay una sesion activa para actualizar los datos.');
-        return;
-      }
+  const refreshData = useCallback(async () => {
+    const currentSession = activeSessionRef.current;
+    if (!currentSession) {
+      setDataError('No hay una sesion activa para actualizar los datos.');
+      return;
+    }
 
-      await loadData(currentSession, reason);
-    },
-    [loadData],
-  );
+    await loadData(currentSession);
+  }, [loadData]);
 
   useEffect(() => {
     let cancelled = false;
 
-    const applySession = async (nextSession: Session | null, source: string) => {
+    const applySession = async (nextSession: Session | null) => {
       if (cancelled) return;
-
-      authEventCountRef.current += 1;
-      console.info(
-        `[inventario] evento auth #${authEventCountRef.current}: ${source}`,
-      );
 
       setSession(nextSession);
       activeSessionRef.current = nextSession;
@@ -181,13 +272,10 @@ function App() {
         return;
       }
 
-      if (loadedUserIdRef.current === nextSession.user.id) {
-        console.info(`[inventario] carga inicial omitida: ${source} ya fue procesado`);
-        return;
-      }
+      if (loadedUserIdRef.current === nextSession.user.id) return;
 
       loadedUserIdRef.current = nextSession.user.id;
-      await loadData(nextSession, `carga inicial desde ${source}`);
+      await loadData(nextSession);
     };
 
     void supabase.auth.getSession().then(({ data: authData, error }) => {
@@ -197,7 +285,7 @@ function App() {
         return;
       }
 
-      void applySession(authData.session, 'getSession');
+      void applySession(authData.session);
     });
 
     const {
@@ -209,17 +297,16 @@ function App() {
         return;
       }
 
-      void applySession(nextSession, `onAuthStateChange:${event}`);
+      void applySession(nextSession);
     });
 
     return () => {
       cancelled = true;
       subscription.unsubscribe();
-      console.info('[inventario] listener auth desmontado');
     };
   }, [loadData]);
 
-  const summary = useMemo(() => {
+  const summary = useMemo((): Summary => {
     const availableUnits = data.products.reduce((sum, product) => sum + product.stock, 0);
     const inventoryCostValue = data.products.reduce(
       (sum, product) => sum + product.stock * product.costPrice,
@@ -239,6 +326,14 @@ function App() {
       lowStockCount,
     };
   }, [data.products, data.sales]);
+
+  const displayName = member?.name || session?.user.email || 'Usuario';
+
+  function navigateTo(tab: Tab) {
+    setActiveTab(tab);
+    setToasts([]);
+    setFormStatus(emptyStatus);
+  }
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -262,7 +357,9 @@ function App() {
   async function handleLogout() {
     setAuthError('');
     const { error } = await supabase.auth.signOut();
-    if (error) setAuthError(getReadableError(error));
+    if (error) {
+      showToast('error', 'No se pudo cerrar sesion', getReadableError(error));
+    }
   }
 
   async function handleCreateProduct(event: FormEvent<HTMLFormElement>) {
@@ -278,19 +375,16 @@ function App() {
     const lowStockThreshold = Number(form.get('lowStockThreshold') ?? 0);
 
     if (!user) {
-      setFormStatus({
-        ...emptyStatus,
-        error: 'No hay un usuario autenticado para crear el producto.',
-      });
+      showToast('error', 'Sesion requerida', 'No hay un usuario autenticado para crear el producto.');
       return;
     }
 
     if (!name) {
-      setFormStatus({ ...emptyStatus, error: 'Ingresa el nombre del producto.' });
+      showToast('warning', 'Falta el nombre', 'Ingresa el nombre del producto.');
       return;
     }
 
-    setFormStatus({ ...emptyStatus, loading: true });
+    setFormStatus({ loading: true });
 
     try {
       const insert: DbRow = {
@@ -307,20 +401,17 @@ function App() {
 
       const { error } = await supabase.from('products').insert(insert);
       if (error) {
-        console.error('[inventario] error Supabase al crear producto', {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        });
+        logSupabaseError('[inventario] error Supabase al crear producto', error);
         throw error;
       }
 
       productForm.reset();
-      setFormStatus({ ...emptyStatus, success: 'Producto creado con stock inicial 0.' });
-      await refreshData('producto creado');
+      await refreshData();
+      showToast('success', 'Producto creado', 'Se agrego con stock inicial 0.');
     } catch (error) {
-      setFormStatus({ ...emptyStatus, error: getReadableError(error) });
+      showToast('error', 'No se pudo crear el producto', getReadableError(error));
+    } finally {
+      setFormStatus(emptyStatus);
     }
   }
 
@@ -337,16 +428,16 @@ function App() {
     const notes = String(form.get('notes') ?? '').trim();
 
     if (!productId || quantity <= 0) {
-      setFormStatus({ ...emptyStatus, error: 'Selecciona un producto e ingresa una cantidad mayor a cero.' });
+      showToast('warning', 'Datos incompletos', 'Selecciona un producto e ingresa una cantidad mayor a cero.');
       return;
     }
 
     if (unitCost !== null && (!Number.isInteger(unitCost) || unitCost < 0)) {
-      setFormStatus({ ...emptyStatus, error: 'Ingresa un costo unitario valido o deja el campo vacio.' });
+      showToast('warning', 'Costo invalido', 'Ingresa un costo unitario valido o deja el campo vacio.');
       return;
     }
 
-    setFormStatus({ ...emptyStatus, loading: true });
+    setFormStatus({ loading: true });
 
     try {
       await registerStockEntry({
@@ -356,11 +447,13 @@ function App() {
         notes,
       });
       entryForm.reset();
-      await refreshData('entrada registrada');
-      setFormStatus({ ...emptyStatus, success: 'Entrada registrada correctamente.' });
+      await refreshData();
+      showToast('success', 'Entrada registrada', 'El inventario fue actualizado.');
     } catch (error) {
       logSupabaseError('[inventario] error Supabase al registrar entrada', error);
-      setFormStatus({ ...emptyStatus, error: `No se pudo registrar la entrada. ${getReadableError(error)}` });
+      showToast('error', 'No se pudo registrar la entrada', getReadableError(error));
+    } finally {
+      setFormStatus(emptyStatus);
     }
   }
 
@@ -378,29 +471,30 @@ function App() {
     const selectedProduct = data.products.find((product) => product.id === productId);
 
     if (!productId || quantity <= 0) {
-      setFormStatus({ ...emptyStatus, error: 'Selecciona un producto e ingresa una cantidad mayor a cero.' });
+      showToast('warning', 'Datos incompletos', 'Selecciona un producto e ingresa una cantidad mayor a cero.');
       return;
     }
 
     if (!selectedProduct) {
-      setFormStatus({ ...emptyStatus, error: 'No se encontro el producto seleccionado.' });
+      showToast('error', 'Producto no encontrado', 'No se encontro el producto seleccionado.');
       return;
     }
 
     if (selectedProduct.stock <= 0) {
-      setFormStatus({ ...emptyStatus, error: 'Sin stock disponible.' });
+      showToast('warning', 'Sin stock disponible', 'El producto seleccionado no tiene unidades disponibles.');
       return;
     }
 
     if (quantity > selectedProduct.stock) {
-      setFormStatus({
-        ...emptyStatus,
-        error: `La venta supera el stock disponible (${formatUnits(selectedProduct.stock)} unidades).`,
-      });
+      showToast(
+        'warning',
+        'Stock insuficiente',
+        `Hay ${formatUnits(selectedProduct.stock)} unidades disponibles.`,
+      );
       return;
     }
 
-    setFormStatus({ ...emptyStatus, loading: true });
+    setFormStatus({ loading: true });
 
     try {
       await registerSale({
@@ -412,11 +506,13 @@ function App() {
       });
       saleForm.reset();
       setSaleFormVersion((version) => version + 1);
-      await refreshData('venta registrada');
-      setFormStatus({ ...emptyStatus, success: 'Venta registrada correctamente.' });
+      await refreshData();
+      showToast('success', 'Venta registrada', 'Stock y ventas fueron actualizados.');
     } catch (error) {
       logSupabaseError('[inventario] error Supabase al registrar venta', error);
-      setFormStatus({ ...emptyStatus, error: `No se pudo registrar la venta. ${getReadableError(error)}` });
+      showToast('error', 'No se pudo registrar la venta', getReadableError(error));
+    } finally {
+      setFormStatus(emptyStatus);
     }
   }
 
@@ -432,11 +528,11 @@ function App() {
     const notes = String(form.get('notes') ?? '').trim();
 
     if (!productId || quantity <= 0 || !movementType) {
-      setFormStatus({ ...emptyStatus, error: 'Selecciona producto, cantidad y motivo de salida.' });
+      showToast('warning', 'Datos incompletos', 'Selecciona producto, cantidad y motivo de salida.');
       return;
     }
 
-    setFormStatus({ ...emptyStatus, loading: true });
+    setFormStatus({ loading: true });
 
     try {
       await registerStockOutput({
@@ -446,11 +542,13 @@ function App() {
         notes,
       });
       outputForm.reset();
-      await refreshData('salida registrada');
-      setFormStatus({ ...emptyStatus, success: 'Salida registrada correctamente.' });
+      await refreshData();
+      showToast('success', 'Salida registrada', 'El inventario fue actualizado.');
     } catch (error) {
       logSupabaseError('[inventario] error Supabase al registrar salida', error);
-      setFormStatus({ ...emptyStatus, error: `No se pudo registrar la salida. ${getReadableError(error)}` });
+      showToast('error', 'No se pudo registrar la salida', getReadableError(error));
+    } finally {
+      setFormStatus(emptyStatus);
     }
   }
 
@@ -470,19 +568,21 @@ function App() {
   }
 
   if (authLoading) {
-    return <FullPageMessage title="Cargando sesion" text="Un momento..." />;
+    return <FullPageMessage title="Cargando sesion" text="Preparando tu inventario compartido..." />;
   }
 
   if (!session) {
     return (
       <main className="auth-shell">
-        <section className="auth-card">
+        <section className="auth-card login-card">
+          <div className="brand-mark">
+            <Warehouse aria-hidden="true" size={28} />
+          </div>
           <p className="eyebrow">Inventario compartido</p>
           <h1>Vicente y Jesus</h1>
           <p>Ingresa con el correo autorizado en Supabase para ver y actualizar el inventario.</p>
           <form className="stack" onSubmit={handleLogin}>
-            <label>
-              Correo
+            <FormField label="Correo">
               <input
                 autoComplete="email"
                 inputMode="email"
@@ -492,9 +592,8 @@ function App() {
                 type="email"
                 value={email}
               />
-            </label>
-            <label>
-              Contrasena
+            </FormField>
+            <FormField label="Contrasena">
               <input
                 autoComplete="current-password"
                 onChange={(event) => setPassword(event.target.value)}
@@ -503,7 +602,7 @@ function App() {
                 type="password"
                 value={password}
               />
-            </label>
+            </FormField>
             {authError && <Alert tone="error" text={authError} />}
             <button className="primary-button" disabled={loginLoading} type="submit">
               {loginLoading ? 'Ingresando...' : 'Iniciar sesion'}
@@ -515,299 +614,593 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">Inventario compartido</p>
-          <h1>Vicente y Jesus</h1>
-          <p>{member ? `Sesion de ${member.name}` : session.user.email}</p>
-        </div>
-        <button className="ghost-button" onClick={handleLogout} type="button">
-          Cerrar sesion
-        </button>
-      </header>
+    <div className="dashboard-shell">
+      <Sidebar
+        activeTab={activeTab}
+        displayName={displayName}
+        email={session.user.email ?? ''}
+        onLogout={handleLogout}
+        onNavigate={navigateTo}
+      />
+      <MobileNavigation
+        activeTab={activeTab}
+        onNavigate={navigateTo}
+      />
+      <ToastViewport onDismiss={dismissToast} toasts={toasts} />
+      <main className="main-content">
+        {dataError && <Alert tone="error" text={dataError} />}
+        {activeTab === 'resumen' && (
+          <SummaryPanel
+            displayName={displayName}
+            loading={dataLoading}
+            movements={data.movements}
+            products={data.products}
+            summary={summary}
+          />
+        )}
+        {activeTab === 'productos' && (
+          <ProductsPanel
+            loading={dataLoading}
+            onCreateProduct={handleCreateProduct}
+            products={data.products}
+            status={formStatus}
+          />
+        )}
+        {activeTab === 'operaciones' && (
+          <OperationsPanel
+            loading={dataLoading}
+            onEntry={handleStockEntry}
+            onOutput={handleOutput}
+            onSale={handleSale}
+            products={data.products}
+            saleFormVersion={saleFormVersion}
+            status={formStatus}
+          />
+        )}
+        {activeTab === 'ventas' && (
+          <SalesPanel loading={dataLoading} sales={data.sales} />
+        )}
+        {activeTab === 'historial' && (
+          <MovementsPanel loading={dataLoading} movements={data.movements} />
+        )}
+      </main>
+    </div>
+  );
+}
 
-      <nav className="tabs" aria-label="Secciones">
-        {[
-          ['resumen', 'Resumen'],
-          ['productos', 'Productos'],
-          ['operaciones', 'Movimientos'],
-          ['ventas', 'Ventas'],
-          ['historial', 'Historial'],
-        ].map(([id, label]) => (
+function Sidebar({
+  activeTab,
+  displayName,
+  email,
+  onLogout,
+  onNavigate,
+}: {
+  activeTab: Tab;
+  displayName: string;
+  email: string;
+  onLogout: () => void;
+  onNavigate: (tab: Tab) => void;
+}) {
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-brand">
+        <div className="brand-mark">
+          <Warehouse aria-hidden="true" size={24} />
+        </div>
+        <div>
+          <strong>Inventario VJ</strong>
+          <span>Vicente y Jesus</span>
+        </div>
+      </div>
+
+      <nav className="sidebar-nav" aria-label="Navegacion principal">
+        {navItems.map((item) => (
           <button
-            className={activeTab === id ? 'active' : ''}
-            key={id}
-            onClick={() => setActiveTab(id as Tab)}
+            aria-current={activeTab === item.id ? 'page' : undefined}
+            className={activeTab === item.id ? 'nav-link active' : 'nav-link'}
+            key={item.id}
+            onClick={() => onNavigate(item.id)}
             type="button"
           >
-            {label}
+            <item.icon aria-hidden="true" size={19} />
+            {item.label}
           </button>
         ))}
       </nav>
 
-      {dataError && <Alert tone="error" text={dataError} />}
-      {dataLoading && <Alert tone="info" text="Actualizando datos compartidos..." />}
-
-      {activeTab === 'resumen' && <SummaryPanel summary={summary} />}
-      {activeTab === 'productos' && (
-        <ProductsPanel
-          products={data.products}
-          onCreateProduct={handleCreateProduct}
-          status={formStatus}
-        />
-      )}
-      {activeTab === 'operaciones' && (
-        <OperationsPanel
-          products={data.products}
-          onEntry={handleStockEntry}
-          onSale={handleSale}
-          onOutput={handleOutput}
-          saleFormVersion={saleFormVersion}
-          status={formStatus}
-        />
-      )}
-      {activeTab === 'ventas' && <SalesPanel sales={data.sales} />}
-      {activeTab === 'historial' && <MovementsPanel movements={data.movements} />}
-    </main>
+      <div className="sidebar-user">
+        <div className="user-avatar" aria-hidden="true">
+          {getInitials(displayName)}
+        </div>
+        <div className="user-copy">
+          <strong>{displayName}</strong>
+          <span>{email}</span>
+        </div>
+        <button aria-label="Cerrar sesion" className="icon-button" onClick={onLogout} type="button">
+          <LogOut aria-hidden="true" size={18} />
+        </button>
+      </div>
+    </aside>
   );
 }
 
-function FullPageMessage({ title, text }: { title: string; text: string }) {
+function MobileNavigation({
+  activeTab,
+  onNavigate,
+}: {
+  activeTab: Tab;
+  onNavigate: (tab: Tab) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const activeItem = navItems.find((item) => item.id === activeTab) ?? navItems[0];
+
+  function handleNavigate(tab: Tab) {
+    onNavigate(tab);
+    setOpen(false);
+  }
+
   return (
-    <main className="auth-shell">
-      <section className="auth-card">
+    <header className="mobile-header">
+      <button
+        aria-expanded={open}
+        aria-label="Abrir navegacion"
+        className="mobile-menu-button"
+        onClick={() => setOpen((current) => !current)}
+        type="button"
+      >
+        {open ? <X aria-hidden="true" size={20} /> : <Menu aria-hidden="true" size={20} />}
+      </button>
+      <div>
+        <span>Inventario VJ</span>
+        <strong>{activeItem.label}</strong>
+      </div>
+      {open && (
+        <nav className="mobile-menu" aria-label="Navegacion movil">
+          {navItems.map((item) => (
+            <button
+              className={activeTab === item.id ? 'mobile-link active' : 'mobile-link'}
+              key={item.id}
+              onClick={() => handleNavigate(item.id)}
+              type="button"
+            >
+              <item.icon aria-hidden="true" size={18} />
+              {item.label}
+            </button>
+          ))}
+        </nav>
+      )}
+    </header>
+  );
+}
+
+function PageHeader({
+  title,
+  eyebrow,
+  description,
+  children,
+}: {
+  title: string;
+  eyebrow: string;
+  description: string;
+  children?: ReactNode;
+}) {
+  return (
+    <header className="page-header">
+      <div>
+        <p className="eyebrow">{eyebrow}</p>
         <h1>{title}</h1>
-        <p>{text}</p>
-      </section>
-    </main>
+        <p>{description}</p>
+      </div>
+      {children && <div className="page-actions">{children}</div>}
+    </header>
   );
 }
 
-function Alert({ tone, text }: { tone: 'error' | 'info' | 'success'; text: string }) {
-  return <div className={`alert ${tone}`}>{text}</div>;
-}
+function SummaryPanel({
+  displayName,
+  loading,
+  movements,
+  products,
+  summary,
+}: {
+  displayName: string;
+  loading: boolean;
+  movements: MovementView[];
+  products: ProductView[];
+  summary: Summary;
+}) {
+  const recentMovements = movements.slice(0, 5);
+  const lowStockProducts = [...products]
+    .sort((first, second) => first.stock - second.stock)
+    .slice(0, 5);
 
-function SummaryPanel({ summary }: { summary: Record<string, number> }) {
   return (
-    <section className="panel">
-      <div className="summary-grid">
-        <Metric label="Unidades disponibles" value={formatUnits(summary.availableUnits)} />
-        <Metric label="Inventario al costo" value={formatClp(summary.inventoryCostValue)} />
-        <Metric label="Ventas acumuladas" value={formatClp(summary.accumulatedSales)} />
-        <Metric label="Ganancia bruta" value={formatClp(summary.grossProfit)} />
-        <Metric label="Productos con stock bajo" value={formatUnits(summary.lowStockCount)} />
+    <section className="page-stack">
+      <PageHeader
+        description="Este es el estado actual del inventario compartido."
+        eyebrow="Resumen"
+        title={`${getGreeting()}, ${displayName}`}
+      >
+        {loading && <LoadingPill text="Actualizando" />}
+      </PageHeader>
+
+      <div className="stat-grid">
+        <StatCard
+          icon={Boxes}
+          label="Unidades disponibles"
+          value={formatUnits(summary.availableUnits)}
+          helper="Stock total entre productos activos y cargados."
+        />
+        <StatCard
+          icon={Warehouse}
+          label="Inventario al costo"
+          value={formatClp(summary.inventoryCostValue)}
+          helper="Valorizado con costo unitario."
+        />
+        <StatCard
+          icon={BadgeDollarSign}
+          label="Ventas acumuladas"
+          value={formatClp(summary.accumulatedSales)}
+          helper="Total vendido registrado."
+        />
+        <StatCard
+          icon={TrendingUp}
+          label="Ganancia bruta"
+          value={formatClp(summary.grossProfit)}
+          helper="Margen bruto acumulado."
+        />
+        <StatCard
+          icon={AlertTriangle}
+          label="Stock bajo"
+          value={formatUnits(summary.lowStockCount)}
+          helper="Productos bajo o igual al minimo."
+        />
+      </div>
+
+      <div className="dashboard-grid">
+        <section className="panel">
+          <SectionHeading
+            icon={Activity}
+            subtitle="Ultimos registros del inventario."
+            title="Actividad reciente"
+          />
+          {loading && !recentMovements.length ? (
+            <LoadingState text="Cargando historial..." />
+          ) : (
+            <div className="activity-list">
+              {recentMovements.map((movement) => (
+                <MovementMiniCard key={movement.id} movement={movement} />
+              ))}
+              {!recentMovements.length && <EmptyState text="Sin movimientos recientes." />}
+            </div>
+          )}
+        </section>
+
+        <section className="panel">
+          <SectionHeading
+            icon={PackageSearch}
+            subtitle="Hasta cinco productos ordenados por menor stock."
+            title="Productos con menor stock"
+          />
+          {loading && !lowStockProducts.length ? (
+            <LoadingState text="Cargando productos..." />
+          ) : (
+            <div className="compact-list">
+              {lowStockProducts.map((product) => (
+                <ProductStockRow key={product.id} product={product} />
+              ))}
+              {!lowStockProducts.length && <EmptyState text="Sin productos para mostrar." />}
+            </div>
+          )}
+        </section>
       </div>
     </section>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <article className="metric-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </article>
-  );
-}
-
 function ProductsPanel({
-  products,
+  loading,
   onCreateProduct,
+  products,
   status,
 }: {
-  products: ProductView[];
+  loading: boolean;
   onCreateProduct: (event: FormEvent<HTMLFormElement>) => void;
+  products: ProductView[];
   status: FormStatus;
 }) {
   return (
-    <section className="split-layout">
-      <form className="panel form-panel" onSubmit={onCreateProduct}>
-        <h2>Nuevo producto</h2>
-        <label>
-          Nombre
-          <input name="name" placeholder="Ej: Polera negra" required />
-        </label>
-        <label>
-          SKU opcional
-          <input name="sku" placeholder="Codigo interno" />
-        </label>
-        <label>
-          Descripcion opcional
-          <input name="description" placeholder="Detalle breve del producto" />
-        </label>
-        <div className="two-columns">
-          <label>
-            Costo
-            <input inputMode="numeric" min="0" name="costPrice" step="1" type="number" />
-          </label>
-          <label>
-            Precio venta
-            <input inputMode="numeric" min="0" name="salePrice" step="1" type="number" />
-          </label>
-        </div>
-        <label>
-          Stock bajo
-          <input
-            defaultValue="5"
-            inputMode="numeric"
-            min="0"
-            name="lowStockThreshold"
-            step="1"
-            type="number"
-          />
-        </label>
-        <FormStatusMessage status={status} />
-        <button className="primary-button" disabled={status.loading} type="submit">
-          Crear producto
-        </button>
-      </form>
+    <section className="page-stack">
+      <PageHeader
+        description="Crea productos y revisa stock, costos y margenes calculados en frontend."
+        eyebrow="Productos"
+        title="Catalogo de inventario"
+      >
+        {loading && <LoadingPill text="Actualizando" />}
+      </PageHeader>
 
-      <section className="panel">
-        <div className="section-title">
-          <h2>Productos</h2>
-          <span>{products.length} activos</span>
-        </div>
-        <div className="table-list">
-          {products.map((product) => (
-            <article className="product-row" key={product.id}>
-              <div>
-                <strong>{product.name}</strong>
-                {product.sku && <span>SKU {product.sku}</span>}
-              </div>
-              <div>
-                <strong>{formatUnits(product.stock)}</strong>
-                <span>stock</span>
-              </div>
-              <div>
-                <strong>{formatClp(product.salePrice)}</strong>
-                <span>venta</span>
-              </div>
-            </article>
-          ))}
-          {!products.length && <EmptyState text="Todavia no hay productos para mostrar." />}
-        </div>
-      </section>
+      <div className="products-layout">
+        <form className="panel form-panel elevated-form" onSubmit={onCreateProduct}>
+          <SectionHeading
+            icon={PackagePlus}
+            subtitle="El stock inicial se guarda siempre en 0."
+            title="Nuevo producto"
+          />
+          <FormField label="Nombre">
+            <input name="name" placeholder="Ej: Polera negra" required />
+          </FormField>
+          <FormField label="SKU opcional">
+            <input name="sku" placeholder="Codigo interno" />
+          </FormField>
+          <FormField label="Descripcion opcional">
+            <input name="description" placeholder="Detalle breve del producto" />
+          </FormField>
+          <div className="two-columns">
+            <FormField label="Costo">
+              <input inputMode="numeric" min="0" name="costPrice" step="1" type="number" />
+            </FormField>
+            <FormField label="Precio venta">
+              <input inputMode="numeric" min="0" name="salePrice" step="1" type="number" />
+            </FormField>
+          </div>
+          <FormField label="Stock bajo">
+            <input
+              defaultValue="5"
+              inputMode="numeric"
+              min="0"
+              name="lowStockThreshold"
+              step="1"
+              type="number"
+            />
+          </FormField>
+          <button className="primary-button" disabled={status.loading} type="submit">
+            {status.loading ? 'Creando...' : 'Crear producto'}
+          </button>
+        </form>
+
+        <section className="panel">
+          <SectionHeading
+            icon={Boxes}
+            subtitle={`${products.length} productos cargados.`}
+            title="Lista de productos"
+          />
+          {loading && !products.length ? (
+            <LoadingState text="Cargando productos..." />
+          ) : (
+            <div className="product-card-grid">
+              {products.map((product) => (
+                <ProductCard key={product.id} product={product} />
+              ))}
+              {!products.length && <EmptyState text="Sin productos. Crea el primero desde el formulario." />}
+            </div>
+          )}
+        </section>
+      </div>
     </section>
   );
 }
 
 function OperationsPanel({
-  products,
+  loading,
   onEntry,
   onSale,
   onOutput,
+  products,
   saleFormVersion,
   status,
 }: {
-  products: ProductView[];
+  loading: boolean;
   onEntry: (event: FormEvent<HTMLFormElement>) => void;
   onSale: (event: FormEvent<HTMLFormElement>) => void;
   onOutput: (event: FormEvent<HTMLFormElement>) => void;
+  products: ProductView[];
   saleFormVersion: number;
   status: FormStatus;
 }) {
+  const [activeOperation, setActiveOperation] = useState<OperationTab>('entry');
+
+  const operationMeta: Record<OperationTab, { title: string; text: string; icon: LucideIcon }> = {
+    entry: {
+      title: 'Registrar entrada',
+      text: 'Compra o reposicion de stock.',
+      icon: ArrowUpCircle,
+    },
+    sale: {
+      title: 'Registrar venta',
+      text: 'Descuenta stock y suma ventas.',
+      icon: CreditCard,
+    },
+    output: {
+      title: 'Registrar salida',
+      text: 'Daños o ajustes de salida.',
+      icon: ArrowDownCircle,
+    },
+  };
+
   return (
-    <section className="operations-grid">
-      <OperationForm
-        button="Registrar entrada"
-        disabled={status.loading}
-        onSubmit={onEntry}
-        products={products}
-        title="Entrada de inventario"
+    <section className="page-stack">
+      <PageHeader
+        description="Elige un tipo de movimiento y registra solo lo necesario."
+        eyebrow="Movimientos"
+        title="Operaciones de inventario"
       >
-        <label>
-          Costo unitario
-          <input inputMode="numeric" min="0" name="unitCost" step="1" type="number" />
-        </label>
-        <label>
-          Nota
-          <input name="notes" placeholder="Compra, reposicion..." />
-        </label>
-      </OperationForm>
+        {loading && <LoadingPill text="Actualizando" />}
+      </PageHeader>
 
-      <SaleOperationForm
-        disabled={status.loading}
-        key={saleFormVersion}
-        onSubmit={onSale}
-        products={products}
-      />
+      <section className="panel operations-panel">
+        <div className="segmented-control" role="tablist" aria-label="Tipo de movimiento">
+          {(Object.keys(operationMeta) as OperationTab[]).map((operation) => {
+            const item = operationMeta[operation];
+            return (
+              <button
+                aria-selected={activeOperation === operation}
+                className={activeOperation === operation ? 'segment active' : 'segment'}
+                key={operation}
+                onClick={() => setActiveOperation(operation)}
+                role="tab"
+                type="button"
+              >
+                <item.icon aria-hidden="true" size={18} />
+                <span>{item.title}</span>
+                <small>{item.text}</small>
+              </button>
+            );
+          })}
+        </div>
 
-      <OperationForm
-        button="Registrar salida"
-        disabled={status.loading}
-        onSubmit={onOutput}
-        products={products}
-        title="Salida o daño"
-      >
-        <label>
-          Motivo
-          <select name="movementType" required>
-            <option value="">Seleccionar</option>
-            <option value="damaged">Producto dañado</option>
-            <option value="adjustment_out">Ajuste de stock</option>
-          </select>
-        </label>
-        <label>
-          Nota
-          <input name="notes" placeholder="Detalle opcional" />
-        </label>
-      </OperationForm>
-
-      <div className="operation-status">
-        <FormStatusMessage status={status} />
-      </div>
+        <div className="operation-form-shell">
+          {activeOperation === 'entry' && (
+            <EntryForm disabled={status.loading} onSubmit={onEntry} products={products} />
+          )}
+          {activeOperation === 'sale' && (
+            <SaleOperationForm
+              disabled={status.loading}
+              key={saleFormVersion}
+              onSubmit={onSale}
+              products={products}
+            />
+          )}
+          {activeOperation === 'output' && (
+            <OutputForm disabled={status.loading} onSubmit={onOutput} products={products} />
+          )}
+        </div>
+      </section>
     </section>
   );
 }
 
-function OperationForm({
-  title,
-  button,
-  disabled = false,
-  products,
-  onSubmit,
-  children,
+function SalesPanel({ loading, sales }: { loading: boolean; sales: SaleView[] }) {
+  const totals = useMemo(
+    () => ({
+      sold: sales.reduce((sum, sale) => sum + sale.total, 0),
+      profit: sales.reduce((sum, sale) => sum + sale.grossProfit, 0),
+    }),
+    [sales],
+  );
+
+  return (
+    <section className="page-stack">
+      <PageHeader
+        description="Revisa cada venta con vendedor, metodo de pago y margen bruto."
+        eyebrow="Ventas"
+        title="Registro comercial"
+      >
+        {loading && <LoadingPill text="Actualizando" />}
+      </PageHeader>
+
+      <div className="sales-summary">
+        <MiniMetric label="Registros" value={formatUnits(sales.length)} />
+        <MiniMetric label="Total vendido" value={formatClp(totals.sold)} />
+        <MiniMetric label="Ganancia total" value={formatClp(totals.profit)} />
+      </div>
+
+      <section className="panel">
+        {loading && !sales.length ? (
+          <LoadingState text="Cargando ventas..." />
+        ) : (
+          <div className="sales-list">
+            {sales.map((sale) => (
+              <SaleCard key={sale.id} sale={sale} />
+            ))}
+            {!sales.length && <EmptyState text="Sin ventas registradas." />}
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function MovementsPanel({
+  loading,
+  movements,
 }: {
-  title: string;
-  button: string;
-  disabled?: boolean;
-  products: ProductView[];
+  loading: boolean;
+  movements: MovementView[];
+}) {
+  const [filter, setFilter] = useState<HistoryFilter>('all');
+  const filteredMovements = movements.filter((movement) => {
+    if (filter === 'all') return true;
+    return getMovementMeta(movement.type).category === filter;
+  });
+
+  return (
+    <section className="page-stack">
+      <PageHeader
+        description="Consulta el historial traducido y filtrado sin mostrar codigos tecnicos."
+        eyebrow="Historial"
+        title="Movimientos registrados"
+      >
+        {loading && <LoadingPill text="Actualizando" />}
+      </PageHeader>
+
+      <section className="panel">
+        <div className="filter-row" aria-label="Filtros de historial">
+          {historyFilters.map((item) => (
+            <button
+              className={filter === item.id ? 'filter-chip active' : 'filter-chip'}
+              key={item.id}
+              onClick={() => setFilter(item.id)}
+              type="button"
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        {loading && !movements.length ? (
+          <LoadingState text="Cargando historial..." />
+        ) : (
+          <div className="history-list">
+            {filteredMovements.map((movement) => (
+              <MovementCard key={movement.id} movement={movement} />
+            ))}
+            {!filteredMovements.length && <EmptyState text="Sin movimientos para este filtro." />}
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function EntryForm({
+  disabled,
+  onSubmit,
+  products,
+}: {
+  disabled: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  children: React.ReactNode;
+  products: ProductView[];
 }) {
   return (
-    <form className="panel form-panel" onSubmit={onSubmit}>
-      <h2>{title}</h2>
-      <label>
-        Producto
-        <select name="productId" required>
-          <option value="">Seleccionar producto</option>
-          {products.map((product) => (
-            <option key={product.id} value={product.id}>
-              {product.name} - stock {formatUnits(product.stock)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Cantidad
+    <form className="form-panel movement-form" onSubmit={onSubmit}>
+      <SectionHeading
+        icon={ArrowUpCircle}
+        subtitle="Usa costo unitario vacio si no aplica."
+        title="Entrada de inventario"
+      />
+      <ProductSelect products={products} />
+      <FormField label="Cantidad">
         <input inputMode="numeric" min="1" name="quantity" required step="1" type="number" />
-      </label>
-      {children}
+      </FormField>
+      <FormField label="Costo unitario">
+        <input inputMode="numeric" min="0" name="unitCost" step="1" type="number" />
+      </FormField>
+      <FormField label="Nota">
+        <input name="notes" placeholder="Compra, reposicion..." />
+      </FormField>
       <button className="primary-button" disabled={disabled} type="submit">
-        {button}
+        {disabled ? 'Guardando...' : 'Registrar entrada'}
       </button>
     </form>
   );
 }
 
 function SaleOperationForm({
-  disabled = false,
+  disabled,
   products,
   onSubmit,
 }: {
-  disabled?: boolean;
+  disabled: boolean;
   products: ProductView[];
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
@@ -816,10 +1209,13 @@ function SaleOperationForm({
   const isOutOfStock = Boolean(selectedProduct && selectedProduct.stock <= 0);
 
   return (
-    <form className="panel form-panel" onSubmit={onSubmit}>
-      <h2>Venta</h2>
-      <label>
-        Producto
+    <form className="form-panel movement-form" onSubmit={onSubmit}>
+      <SectionHeading
+        icon={CreditCard}
+        subtitle="Transferencia queda seleccionada por defecto."
+        title="Venta"
+      />
+      <FormField label="Producto">
         <select
           name="productId"
           onChange={(event) => setSelectedProductId(event.target.value)}
@@ -833,10 +1229,9 @@ function SaleOperationForm({
             </option>
           ))}
         </select>
-      </label>
+      </FormField>
       {isOutOfStock && <p className="inline-warning">Sin stock disponible</p>}
-      <label>
-        Cantidad
+      <FormField label="Cantidad">
         <input
           inputMode="numeric"
           max={selectedProduct?.stock || undefined}
@@ -846,13 +1241,11 @@ function SaleOperationForm({
           step="1"
           type="number"
         />
-      </label>
-      <label>
-        Precio unitario
+      </FormField>
+      <FormField label="Precio unitario">
         <input inputMode="numeric" min="0" name="unitPrice" step="1" type="number" />
-      </label>
-      <label>
-        Método de pago
+      </FormField>
+      <FormField label="Metodo de pago">
         <select defaultValue="Transferencia" name="paymentMethod" required>
           {paymentMethods.map((method) => (
             <option key={method} value={method}>
@@ -860,95 +1253,389 @@ function SaleOperationForm({
             </option>
           ))}
         </select>
-      </label>
-      <label>
-        Nota
+      </FormField>
+      <FormField label="Nota o cliente">
         <input name="notes" placeholder="Cliente, canal..." />
-      </label>
+      </FormField>
       <button className="primary-button" disabled={disabled || isOutOfStock} type="submit">
-        Registrar venta
+        {disabled ? 'Guardando...' : 'Registrar venta'}
       </button>
     </form>
   );
 }
 
-function FormStatusMessage({ status }: { status: FormStatus }) {
-  if (status.error) return <Alert tone="error" text={status.error} />;
-  if (status.success) return <Alert tone="success" text={status.success} />;
-  if (status.loading) return <Alert tone="info" text="Guardando..." />;
-  return null;
-}
-
-function SalesPanel({ sales }: { sales: SaleView[] }) {
+function OutputForm({
+  disabled,
+  onSubmit,
+  products,
+}: {
+  disabled: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  products: ProductView[];
+}) {
   return (
-    <section className="panel">
-      <div className="section-title">
-        <h2>Ventas</h2>
-        <span>{sales.length} registros</span>
-      </div>
-      <div className="table-list">
-        {sales.map((sale) => (
-          <article className="record-row" key={sale.id}>
-            <div>
-              <strong>{sale.productName}</strong>
-              <span>{formatDate(sale.createdAt)} por {sale.sellerName}</span>
-            </div>
-            <div>
-              <strong>{formatUnits(sale.quantity)}</strong>
-              <span>unidades</span>
-            </div>
-            <div>
-              <strong>{formatClp(sale.total)}</strong>
-              <span>total</span>
-            </div>
-            <div>
-              <strong>{formatClp(sale.grossProfit)}</strong>
-              <span>ganancia</span>
-            </div>
-          </article>
-        ))}
-        {!sales.length && <EmptyState text="Todavia no hay ventas registradas." />}
-      </div>
-    </section>
+    <form className="form-panel movement-form" onSubmit={onSubmit}>
+      <SectionHeading
+        icon={ArrowDownCircle}
+        subtitle="Registra daños o ajustes de salida."
+        title="Salida o daño"
+      />
+      <ProductSelect products={products} />
+      <FormField label="Cantidad">
+        <input inputMode="numeric" min="1" name="quantity" required step="1" type="number" />
+      </FormField>
+      <FormField label="Motivo">
+        <select name="movementType" required>
+          <option value="">Seleccionar</option>
+          <option value="damaged">Producto dañado</option>
+          <option value="adjustment_out">Ajuste de stock</option>
+        </select>
+      </FormField>
+      <FormField label="Nota">
+        <input name="notes" placeholder="Detalle opcional" />
+      </FormField>
+      <button className="primary-button" disabled={disabled} type="submit">
+        {disabled ? 'Guardando...' : 'Registrar salida'}
+      </button>
+    </form>
   );
 }
 
-function MovementsPanel({ movements }: { movements: MovementView[] }) {
+function ProductSelect({ products }: { products: ProductView[] }) {
   return (
-    <section className="panel">
-      <div className="section-title">
-        <h2>Historial de movimientos</h2>
-        <span>{movements.length} registros</span>
-      </div>
-      <div className="table-list">
-        {movements.map((movement) => (
-          <article className="record-row" key={movement.id}>
-            <div>
-              <strong>{movement.productName}</strong>
-              <span>{formatDate(movement.createdAt)}</span>
-            </div>
-            <div>
-              <strong>{movement.type}</strong>
-              <span>tipo</span>
-            </div>
-            <div>
-              <strong>{formatUnits(movement.quantity)}</strong>
-              <span>cantidad</span>
-            </div>
-            <div>
-              <strong>{movement.note || 'Sin nota'}</strong>
-              <span>detalle</span>
-            </div>
-          </article>
+    <FormField label="Producto">
+      <select name="productId" required>
+        <option value="">Seleccionar producto</option>
+        {products.map((product) => (
+          <option key={product.id} value={product.id}>
+            {product.name} - stock {formatUnits(product.stock)}
+          </option>
         ))}
-        {!movements.length && <EmptyState text="Todavia no hay movimientos registrados." />}
+      </select>
+    </FormField>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  helper,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  helper: string;
+}) {
+  return (
+    <article className="stat-card">
+      <div className="stat-icon">
+        <Icon aria-hidden="true" size={22} />
       </div>
-    </section>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <p>{helper}</p>
+    </article>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <article className="mini-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
+  );
+}
+
+function ProductCard({ product }: { product: ProductView }) {
+  const unitProfit = product.salePrice - product.costPrice;
+  const costStockValue = product.stock * product.costPrice;
+  const status = getProductStatus(product);
+
+  return (
+    <article className="product-card">
+      <div className="card-topline">
+        <div>
+          <h3>{product.name}</h3>
+          <span>{product.sku ? `SKU ${product.sku}` : 'Sin SKU'}</span>
+        </div>
+        <div className="card-actions">
+          <Badge tone={status.tone}>{status.label}</Badge>
+          <button aria-label="Acciones no disponibles" className="icon-button" disabled type="button">
+            <MoreHorizontal aria-hidden="true" size={18} />
+          </button>
+        </div>
+      </div>
+      <div className="product-metrics">
+        <MiniMetric label="Stock" value={formatUnits(product.stock)} />
+        <MiniMetric label="Costo" value={formatClp(product.costPrice)} />
+        <MiniMetric label="Venta" value={formatClp(product.salePrice)} />
+        <MiniMetric label="Ganancia/u" value={formatClp(unitProfit)} />
+        <MiniMetric label="Stock al costo" value={formatClp(costStockValue)} />
+      </div>
+    </article>
+  );
+}
+
+function ProductStockRow({ product }: { product: ProductView }) {
+  const status = getProductStatus(product);
+
+  return (
+    <article className="stock-row">
+      <div>
+        <strong>{product.name}</strong>
+        <span>{product.sku || 'Sin SKU'}</span>
+      </div>
+      <div>
+        <strong>{formatUnits(product.stock)}</strong>
+        <Badge tone={status.tone}>{status.label}</Badge>
+      </div>
+    </article>
+  );
+}
+
+function MovementMiniCard({ movement }: { movement: MovementView }) {
+  const meta = getMovementMeta(movement.type);
+
+  return (
+    <article className="activity-item">
+      <div className="activity-icon">
+        {getMovementIcon(movement.type)}
+      </div>
+      <div>
+        <strong>{movement.productName}</strong>
+        <span>{formatDate(movement.createdAt)}</span>
+        {movement.note && <p>{movement.note}</p>}
+      </div>
+      <div className="activity-side">
+        <Badge tone={meta.tone}>{meta.label}</Badge>
+        <strong>{formatUnits(movement.quantity)}</strong>
+      </div>
+    </article>
+  );
+}
+
+function SaleCard({ sale }: { sale: SaleView }) {
+  return (
+    <article className="sale-card">
+      <div className="card-topline">
+        <div>
+          <h3>{sale.productName}</h3>
+          <span>{formatDate(sale.createdAt)} por {sale.sellerName}</span>
+        </div>
+        <Badge tone="teal">{sale.paymentMethod}</Badge>
+      </div>
+      <div className="sale-grid">
+        <MiniMetric label="Cantidad" value={formatUnits(sale.quantity)} />
+        <MiniMetric label="Total vendido" value={formatClp(sale.total)} />
+        <MiniMetric label="Ganancia" value={formatClp(sale.grossProfit)} />
+      </div>
+      {sale.note && <p className="record-note">{sale.note}</p>}
+    </article>
+  );
+}
+
+function MovementCard({ movement }: { movement: MovementView }) {
+  const meta = getMovementMeta(movement.type);
+
+  return (
+    <article className="history-card">
+      <div className="card-topline">
+        <div>
+          <h3>{movement.productName}</h3>
+          <span>{formatDate(movement.createdAt)}</span>
+        </div>
+        <MovementTypeBadge type={movement.type} />
+      </div>
+      <div className="history-body">
+        <MiniMetric label="Tipo" value={meta.label} />
+        <MiniMetric label="Cantidad" value={formatUnits(movement.quantity)} />
+      </div>
+      <p className="record-note">{movement.note || 'Sin nota'}</p>
+    </article>
+  );
+}
+
+function MovementTypeBadge({ type }: { type: string }) {
+  const meta = getMovementMeta(type);
+  return <Badge tone={meta.tone}>{meta.label}</Badge>;
+}
+
+function Badge({ children, tone }: { children: ReactNode; tone: BadgeTone }) {
+  return <span className={`badge ${tone}`}>{children}</span>;
+}
+
+function SectionHeading({
+  icon: Icon,
+  title,
+  subtitle,
+}: {
+  icon: LucideIcon;
+  title: string;
+  subtitle: string;
+}) {
+  return (
+    <div className="section-heading">
+      <span className="section-icon">
+        <Icon aria-hidden="true" size={18} />
+      </span>
+      <div>
+        <h2>{title}</h2>
+        <p>{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
+function FormField({
+  children,
+  label,
+}: {
+  children: ReactNode;
+  label: string;
+}) {
+  return (
+    <label>
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function ToastViewport({
+  onDismiss,
+  toasts,
+}: {
+  onDismiss: (id: number) => void;
+  toasts: ToastMessage[];
+}) {
+  return (
+    <div className="toast-viewport" aria-live="polite" aria-relevant="additions">
+      {toasts.map((toast) => (
+        <Toast key={toast.id} onDismiss={() => onDismiss(toast.id)} toast={toast} />
+      ))}
+    </div>
+  );
+}
+
+function Toast({
+  onDismiss,
+  toast,
+}: {
+  onDismiss: () => void;
+  toast: ToastMessage;
+}) {
+  const Icon = toast.tone === 'success'
+    ? CheckCircle2
+    : toast.tone === 'warning'
+      ? AlertTriangle
+      : XCircle;
+
+  return (
+    <div className={`toast ${toast.tone}`}>
+      <Icon aria-hidden="true" size={20} />
+      <div>
+        <strong>{toast.title}</strong>
+        {toast.text && <p>{toast.text}</p>}
+      </div>
+      <button aria-label="Cerrar mensaje" className="toast-close" onClick={onDismiss} type="button">
+        <X aria-hidden="true" size={16} />
+      </button>
+    </div>
+  );
+}
+
+function Alert({ tone, text }: { tone: 'error' | 'info' | 'success'; text: string }) {
+  return <div className={`alert ${tone}`}>{text}</div>;
+}
+
+function LoadingPill({ text }: { text: string }) {
+  return (
+    <span className="loading-pill">
+      <RefreshCw aria-hidden="true" size={15} />
+      {text}
+    </span>
+  );
+}
+
+function LoadingState({ text }: { text: string }) {
+  return (
+    <div className="loading-state">
+      <RefreshCw aria-hidden="true" size={22} />
+      <p>{text}</p>
+    </div>
   );
 }
 
 function EmptyState({ text }: { text: string }) {
-  return <p className="empty-state">{text}</p>;
+  return (
+    <div className="empty-state">
+      <PackageSearch aria-hidden="true" size={24} />
+      <p>{text}</p>
+    </div>
+  );
+}
+
+function FullPageMessage({ title, text }: { title: string; text: string }) {
+  return (
+    <main className="auth-shell">
+      <section className="auth-card">
+        <div className="brand-mark">
+          <Warehouse aria-hidden="true" size={26} />
+        </div>
+        <h1>{title}</h1>
+        <p>{text}</p>
+      </section>
+    </main>
+  );
+}
+
+function getProductStatus(product: ProductView): { label: string; tone: BadgeTone } {
+  if (!product.active) return { label: 'Inactivo', tone: 'gray' };
+  if (product.stock <= 0) return { label: 'Sin stock', tone: 'red' };
+  if (product.stock <= product.lowStockThreshold) return { label: 'Stock bajo', tone: 'yellow' };
+  return { label: 'Disponible', tone: 'green' };
+}
+
+function getMovementMeta(type: string): MovementMeta {
+  return movementTypeMeta[type] ?? {
+    label: 'Movimiento',
+    tone: 'gray',
+    category: 'outputs',
+  };
+}
+
+function getMovementIcon(type: string) {
+  const meta = getMovementMeta(type);
+  if (meta.category === 'entries') return <ArrowUpCircle aria-hidden="true" size={18} />;
+  if (meta.category === 'sales') return <Receipt aria-hidden="true" size={18} />;
+  if (meta.category === 'damages') return <AlertTriangle aria-hidden="true" size={18} />;
+  return <ArrowDownCircle aria-hidden="true" size={18} />;
+}
+
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Buenos dias';
+  if (hour < 20) return 'Buenas tardes';
+  return 'Buenas noches';
+}
+
+function getInitials(value: string): string {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return 'VJ';
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join('');
+}
+
+function logSupabaseError(context: string, error: unknown) {
+  const supabaseError = error as Partial<PostgrestError>;
+
+  console.error(context, {
+    message: supabaseError.message,
+    details: supabaseError.details,
+    hint: supabaseError.hint,
+    code: supabaseError.code,
+  });
 }
 
 export default App;
