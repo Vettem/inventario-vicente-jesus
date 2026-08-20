@@ -18,6 +18,8 @@ import {
   CheckCircle2,
   ClipboardList,
   CreditCard,
+  Eye,
+  EyeOff,
   Home,
   LogOut,
   LucideIcon,
@@ -84,6 +86,13 @@ type Summary = {
   lowStockCount: number;
 };
 
+type ProductProfit = {
+  productId: string;
+  productName: string;
+  quantitySold: number;
+  grossProfit: number;
+};
+
 type NavItem = {
   id: Tab;
   label: string;
@@ -148,6 +157,7 @@ function App() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('resumen');
   const [member, setMember] = useState<MemberView | null>(null);
@@ -475,6 +485,11 @@ function App() {
       return;
     }
 
+    if (!notes) {
+      showToast('warning', 'Referencia requerida', 'Ingresa el cliente o una referencia de venta.');
+      return;
+    }
+
     if (!selectedProduct) {
       showToast('error', 'Producto no encontrado', 'No se encontro el producto seleccionado.');
       return;
@@ -568,7 +583,7 @@ function App() {
   }
 
   if (authLoading) {
-    return <FullPageMessage title="Cargando sesion" text="Preparando tu inventario compartido..." />;
+    return <FullPageMessage title="Cargando sesion" text="Preparando el sistema de inventario..." />;
   }
 
   if (!session) {
@@ -578,9 +593,8 @@ function App() {
           <div className="brand-mark">
             <Warehouse aria-hidden="true" size={28} />
           </div>
-          <p className="eyebrow">Inventario compartido</p>
-          <h1>Vicente y Jesus</h1>
-          <p>Ingresa con el correo autorizado en Supabase para ver y actualizar el inventario.</p>
+          <h1>Inventario</h1>
+          <p>Ingresa con tu cuenta para acceder al sistema de inventario.</p>
           <form className="stack" onSubmit={handleLogin}>
             <FormField label="Correo">
               <input
@@ -594,14 +608,28 @@ function App() {
               />
             </FormField>
             <FormField label="Contrasena">
-              <input
-                autoComplete="current-password"
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Tu contrasena"
-                required
-                type="password"
-                value={password}
-              />
+              <div className="password-input">
+                <input
+                  autoComplete="current-password"
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="Tu contrasena"
+                  required
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                />
+                <button
+                  aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                  className="password-toggle"
+                  onClick={() => setShowPassword((current) => !current)}
+                  type="button"
+                >
+                  {showPassword ? (
+                    <EyeOff aria-hidden="true" size={18} />
+                  ) : (
+                    <Eye aria-hidden="true" size={18} />
+                  )}
+                </button>
+              </div>
             </FormField>
             {authError && <Alert tone="error" text={authError} />}
             <button className="primary-button" disabled={loginLoading} type="submit">
@@ -635,6 +663,7 @@ function App() {
             loading={dataLoading}
             movements={data.movements}
             products={data.products}
+            sales={data.sales}
             summary={summary}
           />
         )}
@@ -688,8 +717,8 @@ function Sidebar({
           <Warehouse aria-hidden="true" size={24} />
         </div>
         <div>
-          <strong>Inventario VJ</strong>
-          <span>Vicente y Jesus</span>
+          <strong>Inventario</strong>
+          <span>Reventas</span>
         </div>
       </div>
 
@@ -751,7 +780,7 @@ function MobileNavigation({
         {open ? <X aria-hidden="true" size={20} /> : <Menu aria-hidden="true" size={20} />}
       </button>
       <div>
-        <span>Inventario VJ</span>
+        <span>Inventario</span>
         <strong>{activeItem.label}</strong>
       </div>
       {open && (
@@ -801,23 +830,26 @@ function SummaryPanel({
   loading,
   movements,
   products,
+  sales,
   summary,
 }: {
   displayName: string;
   loading: boolean;
   movements: MovementView[];
   products: ProductView[];
+  sales: SaleView[];
   summary: Summary;
 }) {
   const recentMovements = movements.slice(0, 5);
   const lowStockProducts = [...products]
     .sort((first, second) => first.stock - second.stock)
     .slice(0, 5);
+  const productProfits = getProductProfits(sales).slice(0, 8);
 
   return (
     <section className="page-stack">
       <PageHeader
-        description="Este es el estado actual del inventario compartido."
+        description="Este es el estado actual del sistema de inventario."
         eyebrow="Resumen"
         title={`${getGreeting()}, ${displayName}`}
       >
@@ -894,6 +926,24 @@ function SummaryPanel({
           )}
         </section>
       </div>
+
+      <section className="panel">
+        <SectionHeading
+          icon={TrendingUp}
+          subtitle="Calculado desde las ventas cargadas, ordenado de mayor a menor ganancia."
+          title="Ganancia acumulada por producto"
+        />
+        {loading && !productProfits.length ? (
+          <LoadingState text="Cargando ganancias por producto..." />
+        ) : (
+          <div className="profit-list">
+            {productProfits.map((item) => (
+              <ProductProfitRow key={item.productId} item={item} />
+            ))}
+            {!productProfits.length && <EmptyState text="Sin ventas para calcular ganancias por producto." />}
+          </div>
+        )}
+      </section>
     </section>
   );
 }
@@ -1254,8 +1304,12 @@ function SaleOperationForm({
           ))}
         </select>
       </FormField>
-      <FormField label="Nota o cliente">
-        <input name="notes" placeholder="Cliente, canal..." />
+      <FormField label="Cliente o referencia de venta">
+        <input
+          name="notes"
+          placeholder="Ej: Cliente, canal o comprobante"
+          required
+        />
       </FormField>
       <button className="primary-button" disabled={disabled || isOutOfStock} type="submit">
         {disabled ? 'Guardando...' : 'Registrar venta'}
@@ -1358,7 +1412,7 @@ function ProductCard({ product }: { product: ProductView }) {
       <div className="card-topline">
         <div>
           <h3>{product.name}</h3>
-          <span>{product.sku ? `SKU ${product.sku}` : 'Sin SKU'}</span>
+          <span>{product.sku ? `SKU ${product.sku}` : 'Sin SKU registrado'}</span>
         </div>
         <div className="card-actions">
           <Badge tone={status.tone}>{status.label}</Badge>
@@ -1367,13 +1421,43 @@ function ProductCard({ product }: { product: ProductView }) {
           </button>
         </div>
       </div>
-      <div className="product-metrics">
-        <MiniMetric label="Stock" value={formatUnits(product.stock)} />
-        <MiniMetric label="Costo" value={formatClp(product.costPrice)} />
-        <MiniMetric label="Venta" value={formatClp(product.salePrice)} />
-        <MiniMetric label="Ganancia/u" value={formatClp(unitProfit)} />
-        <MiniMetric label="Stock al costo" value={formatClp(costStockValue)} />
+      <div className="product-detail-grid">
+        <DetailMetric label="Stock" value={formatUnits(product.stock)} />
+        <DetailMetric label="Stock minimo" value={formatUnits(product.lowStockThreshold)} />
+        <DetailMetric label="Costo" value={formatClp(product.costPrice)} />
+        <DetailMetric label="Precio venta" value={formatClp(product.salePrice)} />
+        <DetailMetric label="Ganancia unitaria" value={formatClp(unitProfit)} />
+        <DetailMetric label="Valor stock al costo" value={formatClp(costStockValue)} wide />
       </div>
+    </article>
+  );
+}
+
+function DetailMetric({
+  label,
+  value,
+  wide = false,
+}: {
+  label: string;
+  value: string;
+  wide?: boolean;
+}) {
+  return (
+    <div className={wide ? 'detail-metric wide' : 'detail-metric'}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ProductProfitRow({ item }: { item: ProductProfit }) {
+  return (
+    <article className="profit-row">
+      <div>
+        <strong>{item.productName}</strong>
+        <span>{formatUnits(item.quantitySold)} unidades vendidas</span>
+      </div>
+      <strong>{formatClp(item.grossProfit)}</strong>
     </article>
   );
 }
@@ -1612,6 +1696,28 @@ function getMovementIcon(type: string) {
   if (meta.category === 'sales') return <Receipt aria-hidden="true" size={18} />;
   if (meta.category === 'damages') return <AlertTriangle aria-hidden="true" size={18} />;
   return <ArrowDownCircle aria-hidden="true" size={18} />;
+}
+
+function getProductProfits(sales: SaleView[]): ProductProfit[] {
+  const profits = new Map<string, ProductProfit>();
+
+  for (const sale of sales) {
+    const key = sale.productId || sale.productName;
+    const current = profits.get(key) ?? {
+      productId: key,
+      productName: sale.productName,
+      quantitySold: 0,
+      grossProfit: 0,
+    };
+
+    current.quantitySold += sale.quantity;
+    current.grossProfit += sale.grossProfit;
+    profits.set(key, current);
+  }
+
+  return [...profits.values()].sort(
+    (first, second) => second.grossProfit - first.grossProfit,
+  );
 }
 
 function getGreeting(): string {

@@ -132,6 +132,33 @@ select:focus-visible {
   gap: 16px;
 }
 
+.password-input {
+  position: relative;
+}
+
+.password-input input {
+  padding-right: 50px;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: #eef3f1;
+  color: var(--primary);
+  transform: translateY(-50%);
+}
+
+.password-toggle:hover {
+  background: #e2ebe7;
+}
+
 label {
   display: grid;
   gap: 7px;
@@ -525,15 +552,77 @@ input::placeholder {
 }
 
 .product-metrics,
+.product-detail-grid,
 .sale-grid,
 .history-body,
-.sales-summary {
+.sales-summary,
+.profit-list {
   display: grid;
   gap: 10px;
 }
 
 .product-metrics {
   grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.product-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.detail-metric {
+  min-width: 0;
+  border: 1px solid #edf2ef;
+  border-radius: 14px;
+  background: #fbfcfb;
+  padding: 12px;
+}
+
+.detail-metric.wide {
+  grid-column: 1 / -1;
+}
+
+.detail-metric span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.detail-metric strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--primary);
+  font-size: 1.05rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.profit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid #edf2ef;
+  border-radius: 14px;
+  background: #fbfcfb;
+  padding: 14px;
+}
+
+.profit-row strong {
+  color: var(--text);
+}
+
+.profit-row > strong {
+  color: var(--success);
+  font-size: 1.05rem;
+  text-align: right;
+}
+
+.profit-row span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.88rem;
 }
 
 .sale-grid,
@@ -914,6 +1003,7 @@ input::placeholder {
   .stat-grid,
   .segmented-control,
   .product-metrics,
+  .product-detail-grid,
   .sale-grid,
   .history-body,
   .sales-summary,
@@ -938,6 +1028,14 @@ input::placeholder {
 
   .stock-row {
     grid-template-columns: 1fr;
+  }
+
+  .profit-row {
+    grid-template-columns: 1fr;
+  }
+
+  .profit-row > strong {
+    text-align: left;
   }
 
   .toast-viewport {

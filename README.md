@@ -1,6 +1,6 @@
-# Inventario Vicente y Jesus
+# Inventario
 
-Aplicacion web MVP para inventario compartido entre Vicente y Jesus. Usa React, Vite, TypeScript, Supabase Auth y tablas/RPC ya existentes en Supabase.
+Aplicacion web MVP para gestion de inventario. Usa React, Vite, TypeScript, Supabase Auth y tablas/RPC ya existentes en Supabase.
 
 ## Requisitos
 
