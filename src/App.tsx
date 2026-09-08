@@ -652,6 +652,7 @@ function App() {
       />
       <MobileNavigation
         activeTab={activeTab}
+        onLogout={handleLogout}
         onNavigate={navigateTo}
       />
       <ToastViewport onDismiss={dismissToast} toasts={toasts} />
@@ -755,9 +756,11 @@ function Sidebar({
 
 function MobileNavigation({
   activeTab,
+  onLogout,
   onNavigate,
 }: {
   activeTab: Tab;
+  onLogout: () => void;
   onNavigate: (tab: Tab) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -766,6 +769,11 @@ function MobileNavigation({
   function handleNavigate(tab: Tab) {
     onNavigate(tab);
     setOpen(false);
+  }
+
+  function handleLogout() {
+    setOpen(false);
+    onLogout();
   }
 
   return (
@@ -796,6 +804,10 @@ function MobileNavigation({
               {item.label}
             </button>
           ))}
+          <button className="mobile-link" onClick={handleLogout} type="button">
+            <LogOut aria-hidden="true" size={18} />
+            Cerrar sesion
+          </button>
         </nav>
       )}
     </header>
