@@ -53,6 +53,10 @@ import {
   type SaleView,
 } from './lib/schema';
 import { formatClp, formatDate, formatUnits } from './lib/format';
+import {
+  useOrganizationContext,
+  type Organization,
+} from './hooks/useOrganizationContext';
 
 type Tab = 'resumen' | 'productos' | 'operaciones' | 'ventas' | 'historial';
 type OperationTab = 'entry' | 'sale' | 'output';
@@ -169,7 +173,16 @@ function App() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const toastIdRef = useRef(0);
   const activeSessionRef = useRef<Session | null>(null);
-  const loadedUserIdRef = useRef<string | null>(null);
+  const activeOrganizationIdRef = useRef<string | null>(null);
+  const dataLoadIdRef = useRef(0);
+  const {
+    activeOrganizationId,
+    activeOrganization,
+    organizations,
+    setActiveOrganization,
+    loading: organizationsLoading,
+    error: organizationsError,
+  } = useOrganizationContext(session?.user.id ?? null);
 
   const showToast = useCallback(
     (tone: ToastTone, title: string, text?: string) => {
@@ -200,20 +213,52 @@ function App() {
     return () => window.clearTimeout(timeoutId);
   }, [toasts]);
 
-  const loadData = useCallback(async (currentSession: Session) => {
+  const loadData = useCallback(async (currentSession: Session, organizationId: string) => {
     if (!currentSession.user) return;
 
+    const loadId = dataLoadIdRef.current + 1;
+    dataLoadIdRef.current = loadId;
+    setData(initialData);
+    setMember(null);
     setDataLoading(true);
     setDataError('');
 
     try {
+      const organizationMembersResult = await supabase
+        .from('organization_members')
+        .select('user_id')
+        .eq('organization_id', organizationId)
+        .eq('active', true);
+
+      if (organizationMembersResult.error) throw organizationMembersResult.error;
+      if (
+        dataLoadIdRef.current !== loadId ||
+        activeOrganizationIdRef.current !== organizationId
+      ) return;
+
+      const organizationMemberIds = ((organizationMembersResult.data ?? []) as DbRow[])
+        .map((row) => (typeof row.user_id === 'string' ? row.user_id : ''))
+        .filter(Boolean);
+
+      if (organizationMemberIds.length === 0) {
+        throw new Error('La organizacion activa no tiene memberships disponibles.');
+      }
+
       const [membersResult, productsResult, salesResult, movementsResult] =
         await Promise.all([
-          supabase.from('members').select('*'),
-          supabase.from('products').select('*'),
-          supabase.from('sales').select('*'),
-          supabase.from('inventory_movements').select('*'),
+          supabase.from('members').select('*').in('user_id', organizationMemberIds),
+          supabase.from('products').select('*').eq('organization_id', organizationId),
+          supabase.from('sales').select('*').eq('organization_id', organizationId),
+          supabase
+            .from('inventory_movements')
+            .select('*')
+            .eq('organization_id', organizationId),
         ]);
+
+      if (
+        dataLoadIdRef.current !== loadId ||
+        activeOrganizationIdRef.current !== organizationId
+      ) return;
 
       const firstError =
         membersResult.error ??
@@ -248,10 +293,17 @@ function App() {
       setMember(activeMember);
       setData({ members, products, sales, movements });
     } catch (error) {
+      if (
+        dataLoadIdRef.current !== loadId ||
+        activeOrganizationIdRef.current !== organizationId
+      ) return;
       logSupabaseError('[inventario] error Supabase al cargar datos', error);
       setDataError(getReadableError(error));
     } finally {
-      setDataLoading(false);
+      if (
+        dataLoadIdRef.current === loadId &&
+        activeOrganizationIdRef.current === organizationId
+      ) setDataLoading(false);
     }
   }, []);
 
@@ -262,13 +314,19 @@ function App() {
       return;
     }
 
-    await loadData(currentSession);
+    const organizationId = activeOrganizationIdRef.current;
+    if (!organizationId) {
+      setDataError('No hay una organizacion activa para actualizar los datos.');
+      return;
+    }
+
+    await loadData(currentSession, organizationId);
   }, [loadData]);
 
   useEffect(() => {
     let cancelled = false;
 
-    const applySession = async (nextSession: Session | null) => {
+    const applySession = (nextSession: Session | null) => {
       if (cancelled) return;
 
       setSession(nextSession);
@@ -276,16 +334,11 @@ function App() {
       setAuthLoading(false);
 
       if (!nextSession) {
-        loadedUserIdRef.current = null;
+        activeOrganizationIdRef.current = null;
+        dataLoadIdRef.current += 1;
         setMember(null);
         setData(initialData);
-        return;
       }
-
-      if (loadedUserIdRef.current === nextSession.user.id) return;
-
-      loadedUserIdRef.current = nextSession.user.id;
-      await loadData(nextSession);
     };
 
     void supabase.auth.getSession().then(({ data: authData, error }) => {
@@ -295,7 +348,7 @@ function App() {
         return;
       }
 
-      void applySession(authData.session);
+      applySession(authData.session);
     });
 
     const {
@@ -307,14 +360,26 @@ function App() {
         return;
       }
 
-      void applySession(nextSession);
+      applySession(nextSession);
     });
 
     return () => {
       cancelled = true;
       subscription.unsubscribe();
     };
-  }, [loadData]);
+  }, []);
+
+  useEffect(() => {
+    activeOrganizationIdRef.current = activeOrganizationId;
+    dataLoadIdRef.current += 1;
+
+    const currentSession = activeSessionRef.current;
+    if (!currentSession || !activeOrganizationId) {
+      return;
+    }
+
+    void loadData(currentSession, activeOrganizationId);
+  }, [activeOrganizationId, loadData]);
 
   const summary = useMemo((): Summary => {
     const availableUnits = data.products.reduce((sum, product) => sum + product.stock, 0);
@@ -389,6 +454,11 @@ function App() {
       return;
     }
 
+    if (!activeOrganizationId) {
+      showToast('error', 'Organizacion requerida', 'Selecciona una organizacion antes de crear el producto.');
+      return;
+    }
+
     if (!name) {
       showToast('warning', 'Falta el nombre', 'Ingresa el nombre del producto.');
       return;
@@ -407,6 +477,7 @@ function App() {
         low_stock_threshold: lowStockThreshold,
         active: true,
         created_by: user.id,
+        organization_id: activeOrganizationId,
       };
 
       const { error } = await supabase.from('products').insert(insert);
@@ -567,6 +638,18 @@ function App() {
     }
   }
 
+  function handleOrganizationChange(organizationId: string) {
+    if (organizationId === activeOrganizationId) return;
+
+    dataLoadIdRef.current += 1;
+    activeOrganizationIdRef.current = organizationId;
+    setData(initialData);
+    setMember(null);
+    setDataError('');
+    setDataLoading(true);
+    setActiveOrganization(organizationId);
+  }
+
   if (!hasSupabaseConfig) {
     return (
       <main className="auth-shell">
@@ -641,19 +724,54 @@ function App() {
     );
   }
 
+  if (organizationsLoading) {
+    return (
+      <FullPageMessage
+        title="Cargando organizacion"
+        text="Preparando el contexto de tu organizacion..."
+      />
+    );
+  }
+
+  if (organizationsError) {
+    return (
+      <OrganizationStatus
+        onLogout={handleLogout}
+        text={organizationsError}
+        title="No se pudieron cargar tus organizaciones"
+      />
+    );
+  }
+
+  if (!activeOrganization) {
+    return (
+      <OrganizationStatus
+        onLogout={handleLogout}
+        text="Tu usuario no tiene una membership activa. Solicita acceso a un administrador."
+        title="Sin organizacion asignada"
+      />
+    );
+  }
+
   return (
     <div className="dashboard-shell">
       <Sidebar
         activeTab={activeTab}
+        activeOrganization={activeOrganization}
         displayName={displayName}
         email={session.user.email ?? ''}
         onLogout={handleLogout}
         onNavigate={navigateTo}
+        onOrganizationChange={handleOrganizationChange}
+        organizations={organizations}
       />
       <MobileNavigation
         activeTab={activeTab}
+        activeOrganization={activeOrganization}
         onLogout={handleLogout}
         onNavigate={navigateTo}
+        onOrganizationChange={handleOrganizationChange}
+        organizations={organizations}
       />
       <ToastViewport onDismiss={dismissToast} toasts={toasts} />
       <main className="main-content">
@@ -700,16 +818,22 @@ function App() {
 
 function Sidebar({
   activeTab,
+  activeOrganization,
   displayName,
   email,
   onLogout,
   onNavigate,
+  onOrganizationChange,
+  organizations,
 }: {
   activeTab: Tab;
+  activeOrganization: Organization;
   displayName: string;
   email: string;
   onLogout: () => void;
   onNavigate: (tab: Tab) => void;
+  onOrganizationChange: (organizationId: string) => void;
+  organizations: Organization[];
 }) {
   return (
     <aside className="sidebar">
@@ -722,6 +846,14 @@ function Sidebar({
           <span>Reventas</span>
         </div>
       </div>
+
+      {organizations.length > 1 && (
+        <OrganizationSelector
+          activeOrganizationId={activeOrganization.id}
+          onChange={onOrganizationChange}
+          organizations={organizations}
+        />
+      )}
 
       <nav className="sidebar-nav" aria-label="Navegacion principal">
         {navItems.map((item) => (
@@ -756,12 +888,18 @@ function Sidebar({
 
 function MobileNavigation({
   activeTab,
+  activeOrganization,
   onLogout,
   onNavigate,
+  onOrganizationChange,
+  organizations,
 }: {
   activeTab: Tab;
+  activeOrganization: Organization;
   onLogout: () => void;
   onNavigate: (tab: Tab) => void;
+  onOrganizationChange: (organizationId: string) => void;
+  organizations: Organization[];
 }) {
   const [open, setOpen] = useState(false);
   const activeItem = navItems.find((item) => item.id === activeTab) ?? navItems[0];
@@ -788,11 +926,21 @@ function MobileNavigation({
         {open ? <X aria-hidden="true" size={20} /> : <Menu aria-hidden="true" size={20} />}
       </button>
       <div>
-        <span>Inventario</span>
+        <span>{activeOrganization.name}</span>
         <strong>{activeItem.label}</strong>
       </div>
       {open && (
         <nav className="mobile-menu" aria-label="Navegacion movil">
+          {organizations.length > 1 && (
+            <OrganizationSelector
+              activeOrganizationId={activeOrganization.id}
+              onChange={(organizationId) => {
+                onOrganizationChange(organizationId);
+                setOpen(false);
+              }}
+              organizations={organizations}
+            />
+          )}
           {navItems.map((item) => (
             <button
               className={activeTab === item.id ? 'mobile-link active' : 'mobile-link'}
@@ -811,6 +959,33 @@ function MobileNavigation({
         </nav>
       )}
     </header>
+  );
+}
+
+function OrganizationSelector({
+  activeOrganizationId,
+  onChange,
+  organizations,
+}: {
+  activeOrganizationId: string;
+  onChange: (organizationId: string) => void;
+  organizations: Organization[];
+}) {
+  return (
+    <label className="organization-selector">
+      <span>Organizacion</span>
+      <select
+        aria-label="Organizacion activa"
+        onChange={(event) => onChange(event.target.value)}
+        value={activeOrganizationId}
+      >
+        {organizations.map((organization) => (
+          <option key={organization.id} value={organization.id}>
+            {organization.name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -1682,6 +1857,31 @@ function FullPageMessage({ title, text }: { title: string; text: string }) {
         </div>
         <h1>{title}</h1>
         <p>{text}</p>
+      </section>
+    </main>
+  );
+}
+
+function OrganizationStatus({
+  title,
+  text,
+  onLogout,
+}: {
+  title: string;
+  text: string;
+  onLogout: () => void;
+}) {
+  return (
+    <main className="auth-shell">
+      <section className="auth-card organization-status-card">
+        <div className="brand-mark">
+          <Warehouse aria-hidden="true" size={26} />
+        </div>
+        <h1>{title}</h1>
+        <p>{text}</p>
+        <button className="ghost-button" onClick={onLogout} type="button">
+          Cerrar sesion
+        </button>
       </section>
     </main>
   );

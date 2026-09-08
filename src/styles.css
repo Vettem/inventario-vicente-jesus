@@ -84,6 +84,15 @@ select:focus-visible {
   gap: 12px;
 }
 
+.organization-status-card {
+  display: grid;
+  gap: 14px;
+}
+
+.organization-status-card .ghost-button {
+  justify-self: start;
+}
+
 .brand-mark {
   display: grid;
   width: 46px;
@@ -228,12 +237,26 @@ input::placeholder {
   position: sticky;
   top: 0;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto;
   gap: 28px;
   height: 100vh;
   border-right: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.92);
   padding: 24px;
+}
+
+.organization-selector {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.organization-selector select {
+  min-height: 42px;
+  background: var(--surface);
+  font-weight: 750;
 }
 
 .sidebar-brand {
@@ -959,6 +982,11 @@ input::placeholder {
     background: var(--surface);
     box-shadow: var(--shadow);
     padding: 10px;
+  }
+
+  .mobile-menu .organization-selector {
+    border-bottom: 1px solid var(--border);
+    padding: 2px 4px 10px;
   }
 
   .mobile-link {
