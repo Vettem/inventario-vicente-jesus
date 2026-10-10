@@ -19,6 +19,9 @@ export type ProductView = {
   costPrice: number;
   salePrice: number;
   lowStockThreshold: number;
+  allowCustomExtras: boolean;
+  extraUnitPrice: number;
+  defaultContents: string;
   active: boolean;
   raw: DbRow;
 };
@@ -150,6 +153,9 @@ export function productFromRow(row: DbRow): ProductView {
       ['low_stock_threshold', 'minimum_stock', 'min_stock', 'stock_minimo'],
       5,
     ),
+    allowCustomExtras: booleanValue(row, ['allow_custom_extras'], false),
+    extraUnitPrice: numberValue(row, ['extra_unit_price']),
+    defaultContents: stringValue(row, ['default_contents']),
     active: booleanValue(row, ['active', 'is_active', 'enabled', 'activo']),
     raw: row,
   };

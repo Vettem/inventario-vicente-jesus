@@ -29,6 +29,7 @@ import {
   PackageSearch,
   Receipt,
   RefreshCw,
+  ShoppingCart,
   TrendingUp,
   Warehouse,
   X,
@@ -54,11 +55,18 @@ import {
 } from './lib/schema';
 import { formatClp, formatDate, formatUnits } from './lib/format';
 import {
+  orderFromRow,
+  orderInputToRow,
+  type OrderInput,
+  type OrderView,
+} from './lib/orders';
+import {
   useOrganizationContext,
   type Organization,
 } from './hooks/useOrganizationContext';
+import { OrdersPanel } from './features/orders/OrdersPanel';
 
-type Tab = 'resumen' | 'productos' | 'operaciones' | 'ventas' | 'historial';
+type Tab = 'resumen' | 'productos' | 'pedidos' | 'operaciones' | 'ventas' | 'historial';
 type OperationTab = 'entry' | 'sale' | 'output';
 type ToastTone = 'success' | 'error' | 'warning';
 type BadgeTone = 'green' | 'teal' | 'red' | 'yellow' | 'gray' | 'blue';
@@ -69,6 +77,7 @@ type LoadState = {
   members: MemberView[];
   sales: SaleView[];
   movements: MovementView[];
+  orders: OrderView[];
 };
 
 type FormStatus = {
@@ -114,6 +123,7 @@ const initialData: LoadState = {
   members: [],
   sales: [],
   movements: [],
+  orders: [],
 };
 
 const emptyStatus: FormStatus = {
@@ -123,6 +133,7 @@ const emptyStatus: FormStatus = {
 const navItems: NavItem[] = [
   { id: 'resumen', label: 'Resumen', icon: Home },
   { id: 'productos', label: 'Productos', icon: Boxes },
+  { id: 'pedidos', label: 'Pedidos', icon: ShoppingCart },
   { id: 'operaciones', label: 'Movimientos', icon: Activity },
   { id: 'ventas', label: 'Ventas', icon: Receipt },
   { id: 'historial', label: 'Historial', icon: ClipboardList },
@@ -244,7 +255,7 @@ function App() {
         throw new Error('La organizacion activa no tiene memberships disponibles.');
       }
 
-      const [membersResult, productsResult, salesResult, movementsResult] =
+      const [membersResult, productsResult, salesResult, movementsResult, ordersResult] =
         await Promise.all([
           supabase.from('members').select('*').in('user_id', organizationMemberIds),
           supabase.from('products').select('*').eq('organization_id', organizationId),
@@ -253,6 +264,11 @@ function App() {
             .from('inventory_movements')
             .select('*')
             .eq('organization_id', organizationId),
+          supabase
+            .from('orders')
+            .select('*')
+            .eq('organization_id', organizationId)
+            .order('created_at', { ascending: false }),
         ]);
 
       if (
@@ -264,7 +280,8 @@ function App() {
         membersResult.error ??
         productsResult.error ??
         salesResult.error ??
-        movementsResult.error;
+        movementsResult.error ??
+        ordersResult.error;
 
       if (firstError) throw firstError;
 
@@ -289,9 +306,12 @@ function App() {
       const movements = ((movementsResult.data ?? []) as DbRow[])
         .map((row) => movementFromRow(row, products))
         .sort(compareByDateDesc);
+      const orders = ((ordersResult.data ?? []) as DbRow[])
+        .map((row) => orderFromRow(row, products))
+        .sort(compareByDateDesc);
 
       setMember(activeMember);
-      setData({ members, products, sales, movements });
+      setData({ members, products, sales, movements, orders });
     } catch (error) {
       if (
         dataLoadIdRef.current !== loadId ||
@@ -448,6 +468,9 @@ function App() {
     const costPrice = Number(form.get('costPrice') ?? 0);
     const salePrice = Number(form.get('salePrice') ?? 0);
     const lowStockThreshold = Number(form.get('lowStockThreshold') ?? 0);
+    const allowCustomExtras = form.get('allowCustomExtras') === 'on';
+    const extraUnitPrice = Number(form.get('extraUnitPrice') ?? 0);
+    const defaultContents = String(form.get('defaultContents') ?? '').trim();
 
     if (!user) {
       showToast('error', 'Sesion requerida', 'No hay un usuario autenticado para crear el producto.');
@@ -475,6 +498,9 @@ function App() {
         cost_price: costPrice,
         sale_price: salePrice,
         low_stock_threshold: lowStockThreshold,
+        allow_custom_extras: allowCustomExtras,
+        extra_unit_price: allowCustomExtras ? extraUnitPrice : 0,
+        default_contents: defaultContents || null,
         active: true,
         created_by: user.id,
         organization_id: activeOrganizationId,
@@ -638,6 +664,66 @@ function App() {
     }
   }
 
+  async function handleCreateOrder(input: OrderInput): Promise<boolean> {
+    const user = activeSessionRef.current?.user;
+    const organizationId = activeOrganizationIdRef.current;
+
+    if (!user || !organizationId) {
+      showToast('error', 'Sesion requerida', 'No hay una organizacion activa para crear el pedido.');
+      return false;
+    }
+
+    try {
+      const insert: DbRow = {
+        ...orderInputToRow(input),
+        organization_id: organizationId,
+        created_by: user.id,
+      };
+      const { error } = await supabase.from('orders').insert(insert).select('id').single();
+
+      if (error) throw error;
+
+      await refreshData();
+      showToast('success', 'Pedido creado', 'El pedido se guardo sin modificar el inventario.');
+      return true;
+    } catch (error) {
+      logSupabaseError('[pedidos] error Supabase al crear pedido', error);
+      showToast('error', 'No se pudo crear el pedido', getReadableError(error));
+      return false;
+    }
+  }
+
+  async function handleUpdateOrder(orderId: string, input: OrderInput): Promise<boolean> {
+    const organizationId = activeOrganizationIdRef.current;
+    const currentOrder = data.orders.find((order) => order.id === orderId);
+
+    if (!organizationId || !currentOrder || currentOrder.organizationId !== organizationId) {
+      showToast('error', 'Pedido no disponible', 'El pedido no pertenece a la organizacion activa.');
+      return false;
+    }
+
+    try {
+      const update = orderInputToRow(input, false);
+      const { error } = await supabase
+        .from('orders')
+        .update(update)
+        .eq('id', orderId)
+        .eq('organization_id', organizationId)
+        .select('id')
+        .single();
+
+      if (error) throw error;
+
+      await refreshData();
+      showToast('success', 'Pedido actualizado', 'Los cambios y el total quedaron guardados.');
+      return true;
+    } catch (error) {
+      logSupabaseError('[pedidos] error Supabase al actualizar pedido', error);
+      showToast('error', 'No se pudo actualizar el pedido', getReadableError(error));
+      return false;
+    }
+  }
+
   function handleOrganizationChange(organizationId: string) {
     if (organizationId === activeOrganizationId) return;
 
@@ -792,6 +878,15 @@ function App() {
             onCreateProduct={handleCreateProduct}
             products={data.products}
             status={formStatus}
+          />
+        )}
+        {activeTab === 'pedidos' && (
+          <OrdersPanel
+            loading={dataLoading}
+            onCreate={handleCreateOrder}
+            onUpdate={handleUpdateOrder}
+            orders={data.orders}
+            products={data.products}
           />
         )}
         {activeTab === 'operaciones' && (
@@ -1186,6 +1281,27 @@ function ProductsPanel({
               inputMode="numeric"
               min="0"
               name="lowStockThreshold"
+              step="1"
+              type="number"
+            />
+          </FormField>
+          <FormField label="Contenido incluido">
+            <textarea
+              name="defaultContents"
+              placeholder="Ej: 8 productos predeterminados + bolsa de tela"
+              rows={3}
+            />
+          </FormField>
+          <label className="checkbox-field">
+            <input name="allowCustomExtras" type="checkbox" />
+            <span>Permitir extras personalizados en pedidos</span>
+          </label>
+          <FormField label="Precio sugerido por extra">
+            <input
+              defaultValue="0"
+              inputMode="numeric"
+              min="0"
+              name="extraUnitPrice"
               step="1"
               type="number"
             />
@@ -1616,6 +1732,14 @@ function ProductCard({ product }: { product: ProductView }) {
         <DetailMetric label="Ganancia unitaria" value={formatClp(unitProfit)} />
         <DetailMetric label="Valor stock al costo" value={formatClp(costStockValue)} wide />
       </div>
+      {product.defaultContents && (
+        <p className="record-note">Incluye: {product.defaultContents}</p>
+      )}
+      {product.allowCustomExtras && (
+        <p className="record-note">
+          Extras personalizados: {formatClp(product.extraUnitPrice)} cada uno
+        </p>
+      )}
     </article>
   );
 }
