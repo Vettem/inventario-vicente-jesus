@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import {
   ArrowLeft,
+  BadgeDollarSign,
   CheckCircle2,
   ClipboardList,
   MapPin,
@@ -9,6 +10,7 @@ import {
   Search,
   ShoppingBag,
   Truck,
+  TriangleAlert,
   UserRound,
 } from 'lucide-react';
 import { formatClp, formatDate, formatUnits } from '../../lib/format';
@@ -24,14 +26,17 @@ import {
   type PaymentStatus,
   type ShippingType,
 } from '../../lib/orders';
-import type { ProductView } from '../../lib/schema';
+import type { ProductView, SaleView } from '../../lib/schema';
 
 type OrdersPanelProps = {
   loading: boolean;
   orders: OrderView[];
   products: ProductView[];
+  sales: SaleView[];
   onCreate: (input: OrderInput) => Promise<boolean>;
+  onRegisterSale: (orderId: string) => Promise<boolean>;
   onUpdate: (orderId: string, input: OrderInput) => Promise<boolean>;
+  onViewSale: () => void;
 };
 
 type PanelMode = 'list' | 'create' | 'detail' | 'edit';
@@ -116,7 +121,7 @@ function normalizeOrderInput(form: OrderFormState, showExtras: boolean): OrderIn
     extraQuantity: showExtras ? Math.max(0, form.extraQuantity) : 0,
     extraUnitPrice: showExtras ? Math.max(0, form.extraUnitPrice) : 0,
     extraDetails: showExtras ? form.extraDetails.trim() : '',
-    shippingCost: Math.max(0, form.shippingCost),
+    shippingCost: 0,
     customerName: form.customerName.trim(),
     customerPhone: form.customerPhone.trim(),
     customerEmail: form.customerEmail.trim(),
@@ -134,14 +139,18 @@ export function OrdersPanel({
   loading,
   orders,
   products,
+  sales,
   onCreate,
+  onRegisterSale,
   onUpdate,
+  onViewSale,
 }: OrdersPanelProps) {
   const [mode, setMode] = useState<PanelMode>('list');
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | OrderStatus>('all');
   const selectedOrder = orders.find((order) => order.id === selectedOrderId) ?? null;
+  const selectedSale = sales.find((sale) => sale.id === selectedOrder?.saleId) ?? null;
 
   const filteredOrders = useMemo(() => {
     const normalizedSearch = search.trim().toLocaleLowerCase('es-CL');
@@ -194,7 +203,10 @@ export function OrdersPanel({
       <OrderDetail
         onBack={returnToList}
         onEdit={() => setMode('edit')}
+        onRegisterSale={onRegisterSale}
+        onViewSale={onViewSale}
         order={selectedOrder}
+        sale={selectedSale}
       />
     );
   }
@@ -280,6 +292,8 @@ export function OrdersPanel({
 }
 
 function OrderCard({ order, onOpen }: { order: OrderView; onOpen: () => void }) {
+  const totals = calculateOrderTotals(order);
+
   return (
     <button className="order-card" onClick={onOpen} type="button">
       <div className="order-card-topline">
@@ -291,8 +305,8 @@ function OrderCard({ order, onOpen }: { order: OrderView; onOpen: () => void }) 
       </div>
       <div className="order-card-summary">
         <span>
-          <strong>{formatClp(order.totalAmount)}</strong>
-          Total
+          <strong>{formatClp(totals.commercialTotal)}</strong>
+          Total comercial
         </span>
         <span>
           <strong>{order.shippingType === 'domicilio' ? 'Domicilio' : 'Sucursal'}</strong>
@@ -540,16 +554,13 @@ function OrderForm({
                 />
               </OrderField>
             </div>
-            <OrderField label="Costo de envio">
-              <input
-                inputMode="numeric"
-                min="0"
-                onChange={(event) => updateField('shippingCost', Number(event.target.value))}
-                step="1"
-                type="number"
-                value={form.shippingCost}
-              />
-            </OrderField>
+            <div className="order-shipping-notice">
+              <Truck aria-hidden="true" size={18} />
+              <div>
+                <strong>Envío por pagar</strong>
+                <span>El cliente paga el despacho directamente a Blue Express.</span>
+              </div>
+            </div>
             {order && (
               <OrderField label="Numero de seguimiento">
                 <input
@@ -643,13 +654,13 @@ function OrderTotalSummary({
       )}
       <div>
         <span>Despacho</span>
-        <strong>{formatClp(totals.shippingTotal)}</strong>
+        <strong>Envío por pagar</strong>
       </div>
       <div className="order-grand-total">
-        <span>Total</span>
-        <strong>{formatClp(totals.totalAmount)}</strong>
+        <span>Total comercial</span>
+        <strong>{formatClp(totals.commercialTotal)}</strong>
       </div>
-      <p>El total definitivo tambien se calcula automaticamente en la base de datos.</p>
+      <p>El despacho no forma parte de la venta ni de la ganancia bruta.</p>
     </aside>
   );
 }
@@ -658,14 +669,35 @@ function OrderDetail({
   order,
   onBack,
   onEdit,
+  onRegisterSale,
+  onViewSale,
+  sale,
 }: {
   order: OrderView;
   onBack: () => void;
   onEdit: () => void;
+  onRegisterSale: (orderId: string) => Promise<boolean>;
+  onViewSale: () => void;
+  sale: SaleView | null;
 }) {
+  const [confirmingSale, setConfirmingSale] = useState(false);
+  const [registeringSale, setRegisteringSale] = useState(false);
   const totals = calculateOrderTotals(order);
   const shippingDestination =
     order.shippingType === 'domicilio' ? order.shippingAddress : order.blueExpressBranch;
+  const saleRegistered = Boolean(order.saleId);
+
+  async function handleRegisterSale() {
+    if (registeringSale || saleRegistered) return;
+
+    setRegisteringSale(true);
+    try {
+      const registered = await onRegisterSale(order.id);
+      if (registered) setConfirmingSale(false);
+    } finally {
+      setRegisteringSale(false);
+    }
+  }
 
   return (
     <section className="page-stack orders-page">
@@ -686,6 +718,96 @@ function OrderDetail({
           </button>
         </div>
       </header>
+
+      {saleRegistered ? (
+        <section className="panel order-sale-status success">
+          <div className="order-sale-status-copy">
+            <CheckCircle2 aria-hidden="true" size={22} />
+            <div>
+              <h2>Venta registrada</h2>
+              <p>
+                Referencia {order.saleId.slice(0, 8)}
+                {sale ? ` · ${formatDate(sale.createdAt)}` : ''}
+              </p>
+            </div>
+          </div>
+          <button className="ghost-button" onClick={onViewSale} type="button">
+            Ver venta
+          </button>
+        </section>
+      ) : order.orderStatus === 'cancelled' ? (
+        <div className="alert warning">Un pedido cancelado no puede registrarse como venta.</div>
+      ) : (
+        <>
+          <section className="panel order-sale-action">
+            <div>
+              <p className="eyebrow">Venta e inventario</p>
+              <h2>Este pedido aún no descuenta stock</h2>
+              <p>Regístralo explícitamente cuando corresponda concretar la venta.</p>
+            </div>
+            <button
+              className="primary-button order-primary-action"
+              onClick={() => setConfirmingSale(true)}
+              type="button"
+            >
+              <BadgeDollarSign aria-hidden="true" size={18} />
+              Registrar como venta
+            </button>
+          </section>
+
+          {confirmingSale && (
+            <section
+              aria-labelledby="order-sale-confirmation-title"
+              className="panel order-sale-confirmation"
+            >
+              <div className="order-section-heading">
+                <span><BadgeDollarSign aria-hidden="true" size={19} /></span>
+                <div>
+                  <h2 id="order-sale-confirmation-title">Confirmar registro de venta</h2>
+                  <p>Revisa los importes antes de descontar el stock.</p>
+                </div>
+              </div>
+              {order.paymentStatus === 'pending' && (
+                <div className="alert warning order-payment-warning">
+                  <TriangleAlert aria-hidden="true" size={19} />
+                  <span>Este pedido aún figura como pago pendiente.</span>
+                </div>
+              )}
+              <div className="order-sale-summary">
+                <DetailRow label="Producto" value={order.productName} />
+                <DetailRow label="Cantidad" value={formatUnits(order.quantity)} />
+                <DetailRow label="Precio base" value={formatClp(order.baseUnitPrice)} />
+                <DetailRow label="Extras" value={formatClp(totals.extrasTotal)} />
+                <DetailRow label="Total comercial" value={formatClp(totals.commercialTotal)} />
+                <DetailRow label="Despacho" value="Envío por pagar" />
+                <DetailRow
+                  label="Total registrado como venta"
+                  strong
+                  value={formatClp(totals.commercialTotal)}
+                />
+              </div>
+              <div className="order-sale-confirmation-actions">
+                <button
+                  className="ghost-button"
+                  disabled={registeringSale}
+                  onClick={() => setConfirmingSale(false)}
+                  type="button"
+                >
+                  Cancelar
+                </button>
+                <button
+                  className="primary-button"
+                  disabled={registeringSale}
+                  onClick={() => void handleRegisterSale()}
+                  type="button"
+                >
+                  {registeringSale ? 'Registrando...' : 'Confirmar venta'}
+                </button>
+              </div>
+            </section>
+          )}
+        </>
+      )}
 
       <div className="order-detail-grid">
         <DetailSection icon={<UserRound size={19} />} title="Datos del cliente">
@@ -726,8 +848,8 @@ function OrderDetail({
         <DetailSection icon={<ClipboardList size={19} />} title="Totales">
           <DetailRow label="Base" value={formatClp(totals.baseTotal)} />
           <DetailRow label="Extras" value={formatClp(totals.extrasTotal)} />
-          <DetailRow label="Envio" value={formatClp(totals.shippingTotal)} />
-          <DetailRow label="Total" value={formatClp(order.totalAmount)} strong />
+          <DetailRow label="Despacho" value="Envío por pagar" />
+          <DetailRow label="Total comercial" value={formatClp(totals.commercialTotal)} strong />
         </DetailSection>
       </div>
 

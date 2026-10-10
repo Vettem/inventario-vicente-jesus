@@ -23,6 +23,7 @@ export type OrderView = {
   productId: string;
   productName: string;
   createdBy: string;
+  saleId: string;
   quantity: number;
   baseUnitPrice: number;
   baseContents: string;
@@ -121,6 +122,7 @@ export function orderFromRow(row: DbRow, products: ProductView[]): OrderView {
     productId,
     productName: product?.name ?? 'Producto no disponible',
     createdBy: stringValue(row, ['created_by']),
+    saleId: nullableText(row, 'sale_id'),
     quantity: numberValue(row, ['quantity'], 1),
     baseUnitPrice: numberValue(row, ['base_unit_price']),
     baseContents: nullableText(row, 'base_contents'),
@@ -152,17 +154,16 @@ export function calculateOrderTotals(input: {
   baseUnitPrice: number;
   extraQuantity: number;
   extraUnitPrice: number;
-  shippingCost: number;
 }) {
   const baseTotal = Math.max(0, input.quantity) * Math.max(0, input.baseUnitPrice);
   const extrasTotal = Math.max(0, input.extraQuantity) * Math.max(0, input.extraUnitPrice);
-  const shippingTotal = Math.max(0, input.shippingCost);
+  const commercialTotal = baseTotal + extrasTotal;
 
   return {
     baseTotal,
     extrasTotal,
-    shippingTotal,
-    totalAmount: baseTotal + extrasTotal + shippingTotal,
+    commercialTotal,
+    totalAmount: commercialTotal,
   };
 }
 

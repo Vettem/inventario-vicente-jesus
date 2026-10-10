@@ -270,6 +270,25 @@ export function getReadableError(error: unknown): string {
     return 'No tienes permisos para realizar esta accion en Supabase.';
   }
 
+  if (
+    message.includes('already has a registered sale') ||
+    message.includes('already registered as a sale')
+  ) {
+    return 'Este pedido ya tiene una venta registrada.';
+  }
+
+  if (message.includes('cancelled order')) {
+    return 'Un pedido cancelado no puede registrarse como venta.';
+  }
+
+  if (message.includes('Insufficient stock')) {
+    return 'No hay stock suficiente para registrar este pedido como venta.';
+  }
+
+  if (message.includes('Order not found')) {
+    return 'El pedido no existe o ya no esta disponible.';
+  }
+
   return message || 'Ocurrio un error inesperado.';
 }
 

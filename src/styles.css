@@ -897,6 +897,12 @@ textarea::placeholder {
   color: var(--success);
 }
 
+.alert.warning {
+  border: 1px solid #f2d8a8;
+  background: #fff8e9;
+  color: #8b5a10;
+}
+
 .loading-pill,
 .loading-state {
   display: inline-flex;
@@ -1178,6 +1184,31 @@ textarea::placeholder {
   line-height: 1.5;
 }
 
+.order-shipping-notice {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  border: 1px solid #d7e8e2;
+  border-radius: 12px;
+  background: #f2f8f6;
+  color: var(--primary);
+  padding: 12px 13px;
+}
+
+.order-shipping-notice > svg {
+  flex: 0 0 auto;
+}
+
+.order-shipping-notice > div {
+  display: grid;
+  gap: 2px;
+}
+
+.order-shipping-notice span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .order-inline-total {
   border-radius: 12px;
   background: #eef5f2;
@@ -1277,6 +1308,73 @@ textarea::placeholder {
 .order-notes-panel {
   display: grid;
   gap: 8px;
+}
+
+.order-sale-action,
+.order-sale-status {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.order-sale-action h2,
+.order-sale-status h2,
+.order-sale-confirmation h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.05rem;
+}
+
+.order-sale-action p:not(.eyebrow),
+.order-sale-status p,
+.order-sale-confirmation .order-section-heading p {
+  margin: 5px 0 0;
+  color: var(--muted);
+}
+
+.order-sale-status.success {
+  border-color: #ccebdd;
+  background: #f7fcf9;
+}
+
+.order-sale-status-copy {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+}
+
+.order-sale-status-copy > svg {
+  flex: 0 0 auto;
+  color: var(--success);
+}
+
+.order-sale-confirmation {
+  display: grid;
+  gap: 18px;
+  border-color: rgba(22, 139, 120, 0.3);
+}
+
+.order-payment-warning {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  margin: 0;
+}
+
+.order-payment-warning svg {
+  flex: 0 0 auto;
+}
+
+.order-sale-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.order-sale-confirmation-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 @keyframes spin {
@@ -1440,9 +1538,15 @@ textarea::placeholder {
   }
 
   .order-header-actions,
-  .order-form-actions {
+  .order-form-actions,
+  .order-sale-confirmation-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .order-sale-action,
+  .order-sale-status {
+    display: grid;
   }
 
   .order-primary-action {

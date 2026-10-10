@@ -724,6 +724,37 @@ function App() {
     }
   }
 
+  async function handleRegisterOrderSale(orderId: string): Promise<boolean> {
+    const organizationId = activeOrganizationIdRef.current;
+    const currentOrder = data.orders.find((order) => order.id === orderId);
+
+    if (!organizationId || !currentOrder || currentOrder.organizationId !== organizationId) {
+      showToast('error', 'Pedido no disponible', 'El pedido no pertenece a la organizacion activa.');
+      return false;
+    }
+
+    if (currentOrder.saleId) {
+      showToast('warning', 'Venta ya registrada', 'Este pedido ya tiene una venta asociada.');
+      return false;
+    }
+
+    try {
+      const { error } = await supabase.rpc('register_order_sale', {
+        p_order_id: orderId,
+      });
+
+      if (error) throw error;
+
+      await refreshData();
+      showToast('success', 'Venta registrada', 'El stock, la venta y el movimiento fueron actualizados.');
+      return true;
+    } catch (error) {
+      logSupabaseError('[pedidos] error Supabase al registrar venta', error);
+      showToast('error', 'No se pudo registrar la venta', getReadableError(error));
+      return false;
+    }
+  }
+
   function handleOrganizationChange(organizationId: string) {
     if (organizationId === activeOrganizationId) return;
 
@@ -886,9 +917,12 @@ function App() {
           <OrdersPanel
             loading={dataLoading}
             onCreate={handleCreateOrder}
+            onRegisterSale={handleRegisterOrderSale}
             onUpdate={handleUpdateOrder}
+            onViewSale={() => navigateTo('ventas')}
             orders={data.orders}
             products={data.products}
+            sales={data.sales}
           />
         )}
         {activeTab === 'operaciones' && (
