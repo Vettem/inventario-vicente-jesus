@@ -255,7 +255,7 @@ export function getReadableError(error: unknown): string {
       : String(error);
 
   if (message.includes('Invalid login credentials')) {
-    return 'Correo o contrasena incorrectos.';
+    return 'Correo o contraseña incorrectos.';
   }
 
   if (message.includes('Email not confirmed')) {

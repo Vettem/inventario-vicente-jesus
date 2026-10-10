@@ -265,10 +265,11 @@ textarea::placeholder {
 .sidebar {
   position: sticky;
   top: 0;
-  display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   gap: 28px;
   height: 100vh;
+  overflow-y: auto;
   border-right: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.92);
   padding: 24px;
@@ -348,8 +349,10 @@ textarea::placeholder {
 .sidebar-user {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
+  flex: 0 0 auto;
   gap: 10px;
   align-items: center;
+  margin-top: auto;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: #fbfcfb;
@@ -1339,12 +1342,35 @@ textarea::placeholder {
     border-radius: 16px;
     background: var(--surface);
     box-shadow: var(--shadow);
+    max-height: calc(100vh - 82px);
+    overflow-y: auto;
     padding: 10px;
   }
 
   .mobile-menu .organization-selector {
     border-bottom: 1px solid var(--border);
     padding: 2px 4px 10px;
+  }
+
+  .mobile-user {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    border-top: 1px solid var(--border);
+    padding: 10px 10px 2px;
+  }
+
+  .mobile-user .user-copy,
+  .mobile-user strong,
+  .mobile-user span {
+    overflow: hidden;
+  }
+
+  .mobile-user strong,
+  .mobile-user span {
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .mobile-link {

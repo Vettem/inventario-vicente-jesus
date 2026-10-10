@@ -776,12 +776,12 @@ function App() {
                 value={email}
               />
             </FormField>
-            <FormField label="Contrasena">
+            <FormField label="Contraseña">
               <div className="password-input">
                 <input
                   autoComplete="current-password"
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Tu contrasena"
+                  placeholder="Tu contraseña"
                   required
                   type={showPassword ? 'text' : 'password'}
                   value={password}
@@ -854,6 +854,8 @@ function App() {
       <MobileNavigation
         activeTab={activeTab}
         activeOrganization={activeOrganization}
+        displayName={displayName}
+        email={session.user.email ?? ''}
         onLogout={handleLogout}
         onNavigate={navigateTo}
         onOrganizationChange={handleOrganizationChange}
@@ -938,7 +940,6 @@ function Sidebar({
         </div>
         <div>
           <strong>Inventario</strong>
-          <span>Reventas</span>
         </div>
       </div>
 
@@ -973,7 +974,7 @@ function Sidebar({
           <strong>{displayName}</strong>
           <span>{email}</span>
         </div>
-        <button aria-label="Cerrar sesion" className="icon-button" onClick={onLogout} type="button">
+        <button aria-label="Cerrar sesión" className="icon-button" onClick={onLogout} type="button">
           <LogOut aria-hidden="true" size={18} />
         </button>
       </div>
@@ -984,6 +985,8 @@ function Sidebar({
 function MobileNavigation({
   activeTab,
   activeOrganization,
+  displayName,
+  email,
   onLogout,
   onNavigate,
   onOrganizationChange,
@@ -991,6 +994,8 @@ function MobileNavigation({
 }: {
   activeTab: Tab;
   activeOrganization: Organization;
+  displayName: string;
+  email: string;
   onLogout: () => void;
   onNavigate: (tab: Tab) => void;
   onOrganizationChange: (organizationId: string) => void;
@@ -1047,9 +1052,18 @@ function MobileNavigation({
               {item.label}
             </button>
           ))}
+          <div className="mobile-user">
+            <div className="user-avatar" aria-hidden="true">
+              {getInitials(displayName)}
+            </div>
+            <div className="user-copy">
+              <strong>{displayName}</strong>
+              <span>{email}</span>
+            </div>
+          </div>
           <button className="mobile-link" onClick={handleLogout} type="button">
             <LogOut aria-hidden="true" size={18} />
-            Cerrar sesion
+            Cerrar sesión
           </button>
         </nav>
       )}
@@ -2004,7 +2018,7 @@ function OrganizationStatus({
         <h1>{title}</h1>
         <p>{text}</p>
         <button className="ghost-button" onClick={onLogout} type="button">
-          Cerrar sesion
+          Cerrar sesión
         </button>
       </section>
     </main>
